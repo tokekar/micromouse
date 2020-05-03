@@ -1,0 +1,180 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="vayu">
+
+  <xacro:property name="base_width" value="0.07"/>
+  <xacro:property name="base_len" value="0.07"/>
+  <xacro:property name="base_thickness" value="0.02"/>
+  <xacro:property name="wheel_radius" value="0.02"/>
+  <xacro:property name="wheel_separation" value="${(base_width+2*base_wheel_gap)}"/>
+  <xacro:property name="wheel_thickness" value="0.005"/>
+  <xacro:property name="base_wheel_gap" value="${wheel_thickness/2}"/>
+  <xacro:property name="wheel_joint_offset" value="0.01"/>
+
+  <xacro:property name="caster_wheel_radius" value="0.005"/>
+  <xacro:property name="caster_wheel_mass" value="0.001"/>
+  <xacro:property name="caster_wheel_offset" value="${base_len/2-caster_wheel_radius}"/>
+  <xacro:property name="caster_support_length" value="${wheel_radius-base_thickness/2-2*caster_wheel_radius-0.001}"/>
+
+  <xacro:property name="laser_size_x" value="0.01"/>
+  <xacro:property name="laser_size_y" value="0.01"/>
+  <xacro:property name="laser_size_z" value="0.01"/>
+  <xacro:property name="laser_origin_x" value="${base_len/2}"/>
+  <xacro:property name="laser_origin_y" value="0"/>
+  <xacro:property name="laser_origin_z" value="0"/>
+
+  <!--Color Properties-->
+  <material name="blue">
+    <color rgba="0 0 0.8 1"/>
+  </material>
+  <material name="black">
+    <color rgba="0 0 0 1"/>
+  </material>
+  <material name="white">
+    <color rgba="1 1 1 1"/>
+  </material>
+  <material name="red">
+    <color rgba="0.8 0.0 0.0 1.0"/>
+  </material>
+  <material name="green">
+    <color rgba="0.1 0.7 0.1 1"/>
+  </material>
+
+  <!--Base Footprint-->
+  <link name="base_footprint">
+    <!--xacro:box_inertia m="0.001" w="0.001" h="0.001" d="0.001"/-->
+  </link>
+
+  <!--Base link-->
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <box size="${base_len} ${base_width} ${base_thickness}"/>
+      </geometry>
+      <material name="green"/>
+    </visual>
+    <collision name="base_collision">
+      <geometry>
+        <box size="${base_len} ${base_width} ${base_thickness}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="5"/>
+      <inertia ixx="0.00022083" ixy="0.0" ixz="0.0" iyy="0.00022083" iyz="0.0" izz="0.00040833"/>
+    </inertial>
+  </link>
+
+  <!--base_link to base_footprint Joint-->
+  <joint name="base_link_joint" type="fixed">
+    <origin xyz="0 0 ${wheel_radius + 0.005}" rpy="0 0 0" />
+    <parent link="base_footprint"/>
+    <child link="base_link" />
+  </joint>
+
+<link name="back_caster_link">
+<visual>
+      <origin xyz="-${caster_wheel_offset} 0 -${base_thickness/2+caster_wheel_radius}" rpy="0 0 0"/>
+      <geometry>
+	<sphere radius="${caster_wheel_radius}"/>
+      </geometry>
+      <material name="black"/>
+    </visual>
+    <collision>
+      <origin xyz="-${caster_wheel_offset} 0 -${base_thickness/2+caster_wheel_radius}" rpy="0 0 0"/>
+      <geometry>
+        <sphere radius="${caster_wheel_radius}"/>
+      </geometry>
+    </collision>
+</link>
+
+  <joint name="back_caster_link_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="base_link"/>
+    <child link="back_caster_link" />
+  </joint>
+
+<!--link name="front_caster_link">
+<visual>
+      <origin xyz="${caster_wheel_offset} 0 -${base_thickness/2+caster_wheel_radius}" rpy="0 0 0"/>
+      <geometry>
+	<sphere radius="${caster_wheel_radius}"/>
+      </geometry>
+      <material name="black"/>
+    </visual>
+    <collision>
+      <origin xyz="${caster_wheel_offset} 0 -${base_thickness/2+caster_wheel_radius}" rpy="0 0 0"/>
+      <geometry>
+        <sphere radius="${caster_wheel_radius}"/>
+      </geometry>
+    </collision>
+</link>
+
+  <joint name="front_caster_link_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="base_link"/>
+    <child link="front_caster_link" />
+  </joint-->
+
+  <!--Wheel link & joint macro-->
+  <xacro:macro name="wheel" params="prefix reflect">
+    <link name="${prefix}_wheel">
+      <visual>
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_thickness}"/>
+        </geometry>
+        <material name="black"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_thickness}"/>
+        </geometry>
+      </collision>
+      <inertial>
+      <mass value="1"/>
+      <inertia ixx="2.3e-06" ixy="0.0" ixz="0.0" iyy="2.3e-06" iyz="0.0" izz="4.5e-06"/>
+    </inertial>
+    </link>
+
+    <joint name="${prefix}_wheel_joint" type="continuous">
+      <axis xyz="0 1 0" rpy="0 0 0" />
+      <parent link="base_link"/>
+      <child link="${prefix}_wheel"/>
+      <origin xyz="${wheel_joint_offset} ${((base_width/2)+base_wheel_gap)*reflect} 0" rpy="0 0 0"/>
+<limit effort="100" velocity="100"/>
+      <joint_properties damping="0.0" friction="0.0"/>
+    </joint>
+  </xacro:macro>
+
+  <!--Create Left & Right Wheel links/joints-->
+  <xacro:wheel prefix="left" reflect="1"/>
+  <xacro:wheel prefix="right" reflect="-1"/>
+
+
+  <!--Create Left & Right Wheel links/joints-->
+
+  <!--Laser-->
+  <link name="sensor_laser">
+    <visual>
+      <geometry>
+        <box size="${laser_size_x} ${laser_size_y} ${laser_size_z}"/>
+      </geometry>
+      <material name="red"/>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="${laser_size_x} ${laser_size_y} ${laser_size_z}"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="sensor_laser_joint" type="fixed">
+    <origin xyz="${laser_origin_x} ${laser_origin_y} ${laser_origin_z}" rpy="0 0 0" />
+    <parent link="base_link"/>
+    <child link="sensor_laser" />
+  </joint>
+
+
+  <xacro:include filename="$(find micromouse_description)/urdf/mouse_gazebo.xacro"/>
+
+</robot>
