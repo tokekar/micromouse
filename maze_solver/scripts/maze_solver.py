@@ -20,14 +20,9 @@ ranges = []
 walls = []
 pose = []
 
-# Actions
-LEFT = 1
-STRAIGHT = 0
-RIGHT = -1
-
 DIRS = {'N':0,'W':1,'S':2,'E':3, 0:'N', 1:'W', 2:'S', 3:'E'} # bijective mapping to keep it easier to do modular math
-ACTIONS = ['L','S','R']
-COSTS = {'S': 1, 'L': 5, 'R': 5}
+ACTIONS = ['L','F','R','S']
+COSTS = {'F': 1, 'L': 5, 'R': 5}
 
 # Maze
 maze = []
@@ -40,8 +35,6 @@ class GridGraph():
 		print(self.graph)
 
 	def get_path(self,start,goal):
-		path = []
-
 		frontier = queue.PriorityQueue()
 		visited = {start:True}
 		infrontier = {}
@@ -49,7 +42,7 @@ class GridGraph():
 		successors = list(self.graph[start])
 		for s in successors:
 		    if not visited.get(s):
-		        frontier.put( (COSTS[self.graph[start][s]], (s,[ self.graph[start][s] ],COSTS[self.graph[start][s]])) )
+		        frontier.put( (COSTS[self.graph[start][s]], (s,[ self.graph[start][s] ],[s],COSTS[self.graph[start][s]]) ) )
 		        infrontier[s] = True
 
 		while not frontier.empty():
@@ -57,22 +50,24 @@ class GridGraph():
 			curr_node = frontier.get()
 			#print(curr_node)
 			curr_state = curr_node[1][0]
-			curr_path = curr_node[1][1]
-			curr_cost = curr_node[1][2]
+			curr_actionlist = curr_node[1][1]
+			curr_vertexlist = curr_node[1][2]
+			curr_cost = curr_node[1][3]
+
 			visited[curr_state] = True
 			infrontier[curr_state] = False
 
 			if curr_state[0] == goal[0] and curr_state[1] == goal[1]:
 				#print("Found solution:", curr_path)
-				return curr_path
+				return curr_actionlist, curr_vertexlist
 
 			successors = list(self.graph[curr_state])
 			for s in successors:
 				if not visited.get(s):# and not infrontier.get(s):
-					frontier.put( (COSTS[self.graph[curr_state][s]]+curr_cost, (s,curr_path + [ self.graph[curr_state][s] ],COSTS[self.graph[curr_state][s]]+curr_cost)) )
+					frontier.put( (COSTS[self.graph[curr_state][s]]+curr_cost, (s,curr_actionlist + [ self.graph[curr_state][s] ],curr_vertexlist+[s],COSTS[self.graph[curr_state][s]]+curr_cost)) )
 					infrontier[s] = True
 
-		return path
+		return [],[]
 
 	def remove_edge(self,u,v):
 		self.graph[u].pop(v,None)
@@ -84,77 +79,77 @@ class GridGraph():
 	def update_edges(self,row,col,dir,rwall,fwall,lwall):
 		if dir == 'N':
 			if fwall == False and row+1 < self.dim:
-				self.add_edge( (row,col,'N'), (row+1,col,'N'), 'S')
-				self.add_edge( (row+1,col,'S'), (row,col,'S'), 'S')
+				self.add_edge( (row,col,'N'), (row+1,col,'N'), 'F')
+				self.add_edge( (row+1,col,'S'), (row,col,'S'), 'F')
 			elif row+1 < self.dim:
 				self.remove_edge( (row,col,'N'), (row+1,col,'N') )
 				self.remove_edge( (row+1,col,'S'), (row,col,'S') )
 			if rwall == False and col+1 < self.dim:
-				self.add_edge( (row,col,'E'), (row,col+1,'E'), 'S')
-				self.add_edge( (row,col+1,'W'), (row,col,'W'), 'S')
+				self.add_edge( (row,col,'E'), (row,col+1,'E'), 'F')
+				self.add_edge( (row,col+1,'W'), (row,col,'W'), 'F')
 			elif col+1 < self.dim:
 				self.remove_edge( (row,col,'E'), (row,col+1,'E') )
 				self.remove_edge( (row,col+1,'W'), (row,col,'W') )
 			if lwall == False and col > 0:
-				self.add_edge( (row,col,'W'), (row,col-1,'W'), 'S')
-				self.add_edge( (row,col-1,'E'), (row,col,'E'), 'S')
+				self.add_edge( (row,col,'W'), (row,col-1,'W'), 'F')
+				self.add_edge( (row,col-1,'E'), (row,col,'E'), 'F')
 			elif col > 0:
 				self.remove_edge( (row,col,'W'), (row,col-1,'W') )
 				self.remove_edge( (row,col-1,'E'), (row,col,'E') )
 		if dir == 'S':
 			if fwall == False and row > 0:
-				self.add_edge( (row,col,'S'), (row-1,col,'S'), 'S')
-				self.add_edge( (row-1,col,'N'), (row,col,'N'), 'S')
+				self.add_edge( (row,col,'S'), (row-1,col,'S'), 'F')
+				self.add_edge( (row-1,col,'N'), (row,col,'N'), 'F')
 			elif row > 0:
 				self.remove_edge( (row,col,'S'), (row-1,col,'S') )
 				self.remove_edge( (row-1,col,'N'), (row,col,'N') )
 			if rwall == False and col > 0:
-				self.add_edge( (row,col,'W'), (row,col-1,'W'), 'S')
-				self.add_edge( (row,col-1,'E'), (row,col,'E'), 'S')
+				self.add_edge( (row,col,'W'), (row,col-1,'W'), 'F')
+				self.add_edge( (row,col-1,'E'), (row,col,'E'), 'F')
 			elif col > 0:
 				self.remove_edge( (row,col,'W'), (row,col-1,'W') )
 				self.remove_edge( (row,col-1,'E'), (row,col,'E') )
 			if lwall == False and col+1 < self.dim:
-				self.add_edge( (row,col,'E'), (row,col+1,'E'), 'S')
-				self.add_edge( (row,col+1,'W'), (row,col,'W'), 'S')
+				self.add_edge( (row,col,'E'), (row,col+1,'E'), 'F')
+				self.add_edge( (row,col+1,'W'), (row,col,'W'), 'F')
 			elif col+1 < self.dim:
 				self.remove_edge( (row,col,'E'), (row,col+1,'E') )
 				self.remove_edge( (row,col+1,'W'), (row,col,'W') )
 		if dir == 'E':
 			if fwall == False and col+1 < self.dim:
-				self.add_edge( (row,col,'E'), (row,col+1,'E'), 'S')
-				self.add_edge( (row,col+1,'W'), (row,col,'W'), 'S')
+				self.add_edge( (row,col,'E'), (row,col+1,'E'), 'F')
+				self.add_edge( (row,col+1,'W'), (row,col,'W'), 'F')
 			elif col+1 < self.dim:
 				self.remove_edge( (row,col,'E'), (row,col+1,'E') )
 				self.remove_edge( (row,col+1,'W'), (row,col,'W') )
 			if rwall == False and row > 0:
-				self.add_edge( (row,col,'S'), (row-1,col,'S'), 'S')
-				self.add_edge( (row-1,col,'N'), (row,col,'N'), 'S')
+				self.add_edge( (row,col,'S'), (row-1,col,'S'), 'F')
+				self.add_edge( (row-1,col,'N'), (row,col,'N'), 'F')
 			elif row > 0:
 				self.remove_edge( (row,col,'S'), (row-1,col,'S') )
 				self.remove_edge( (row-1,col,'N'), (row,col,'N') )
 			if lwall == False and row+1 < self.dim:
-				self.add_edge( (row,col,'N'), (row+1,col,'N'), 'S')
-				self.add_edge( (row+1,col,'S'), (row,col,'S'), 'S')
+				self.add_edge( (row,col,'N'), (row+1,col,'N'), 'F')
+				self.add_edge( (row+1,col,'S'), (row,col,'S'), 'F')
 			elif row+1 < self.dim:
 				self.remove_edge( (row,col,'N'), (row+1,col,'N') )
 				self.remove_edge( (row+1,col,'S'), (row,col,'S') )
 		if dir == 'W':
 			if fwall == False and col > 0:
-				self.add_edge( (row,col,'W'), (row,col-1,'W'), 'S')
-				self.add_edge( (row,col-1,'E'), (row,col,'E'), 'S')
+				self.add_edge( (row,col,'W'), (row,col-1,'W'), 'F')
+				self.add_edge( (row,col-1,'E'), (row,col,'E'), 'F')
 			elif col > 0:
 				self.remove_edge( (row,col,'W'), (row,col-1,'W') )
 				self.remove_edge( (row,col-1,'E'), (row,col,'E') )
 			if rwall == False and row+1 < self.dim:
-				self.add_edge( (row,col,'N'), (row+1,col,'N'), 'S')
-				self.add_edge( (row+1,col,'S'), (row,col,'S'), 'S')
+				self.add_edge( (row,col,'N'), (row+1,col,'N'), 'F')
+				self.add_edge( (row+1,col,'S'), (row,col,'S'), 'F')
 			elif row+1 < self.dim:
 				self.remove_edge( (row,col,'N'), (row+1,col,'N') )
 				self.remove_edge( (row+1,col,'S'), (row,col,'S') )
 			if lwall == False and row > 0:
-				self.add_edge( (row,col,'S'), (row-1,col,'S'), 'S')
-				self.add_edge( (row-1,col,'N'), (row,col,'N'), 'S')
+				self.add_edge( (row,col,'S'), (row-1,col,'S'), 'F')
+				self.add_edge( (row-1,col,'N'), (row,col,'N'), 'F')
 			elif row > 0:
 				self.remove_edge( (row,col,'S'), (row-1,col,'S') )
 				self.remove_edge( (row-1,col,'N'), (row,col,'N') )
@@ -275,20 +270,22 @@ class Maze():
 		path = self.gridgraph.get_path( (start_row,start_col,start_dir), (goal_row,goal_col,goal_dir) )
 		return path
 
-	def update_pose(self,action):
-		if action ==  STRAIGHT:
+	def update_pose(self,action,num_steps=1):
+		if action ==  'F':
 			if self.curr_dir == 'N':
-				self.set_curr_pose(self.curr_row+1,self.curr_col,self.curr_dir)
+				self.set_curr_pose(self.curr_row+num_steps,self.curr_col,self.curr_dir)
 			elif self.curr_dir == 'S':
-				self.set_curr_pose(self.curr_row-1,self.curr_col,self.curr_dir)
+				self.set_curr_pose(self.curr_row-num_steps,self.curr_col,self.curr_dir)
 			elif self.curr_dir == 'E':
-				self.set_curr_pose(self.curr_row,self.curr_col+1,self.curr_dir)
+				self.set_curr_pose(self.curr_row,self.curr_col+num_steps,self.curr_dir)
 			elif self.curr_dir == 'W':
-				self.set_curr_pose(self.curr_row,self.curr_col-1,self.curr_dir)
-		elif action == RIGHT:
-			self.set_curr_pose(self.curr_row,self.curr_col,DIRS[np.mod(DIRS[self.curr_dir]-1,4)])
-		elif action == LEFT:
-			self.set_curr_pose(self.curr_row,self.curr_col,DIRS[np.mod(DIRS[self.curr_dir]+1,4)])
+				self.set_curr_pose(self.curr_row,self.curr_col-num_steps,self.curr_dir)
+		elif action == 'R':
+			self.set_curr_pose(self.curr_row,self.curr_col,DIRS[np.mod(DIRS[self.curr_dir]-num_steps,4)])
+		elif action == 'L':
+			self.set_curr_pose(self.curr_row,self.curr_col,DIRS[np.mod(DIRS[self.curr_dir]+num_steps,4)])
+		elif action == 'S':
+			self.set_curr_pose(self.curr_row,self.curr_col,self.curr_dir)
 		else:
 			rospy.logwarn('Wrong action in update_pose')
 
@@ -321,7 +318,7 @@ class Maze():
 		self.gridgraph.update_edges(row,col,dir,rwall,fwall,lwall)
 
 	def is_visited(self,row,col):
-		return self.cells[row,col].is_visited()
+		return self.cells[row][col].is_visited()
 
 	def set_wall(self,walldir,exists=True,row=None,col=None):
 		if row == None:
@@ -361,30 +358,49 @@ class Maze():
 		self.gridgraph = GridGraph(dim)
 
 
-def is_outlier(data,sample=None):
+def get_optimized_path(actionlist,vertexlist,maze):
+	num_actions = len(actionlist)
+	if num_actions < 2:
+		return actionlist, vertexlist, [1]*num_actions
 
+	opt_actionlist = []
+	opt_vertexlist = []
+	opt_numlist = []
+
+	for curr_action, curr_vertex in zip(actionlist,vertexlist):
+		# concat only if last and current actions are the same AND last and current cell are visited
+		if len(opt_actionlist) == 0:
+			opt_actionlist.append(curr_action)
+			opt_vertexlist.append(curr_vertex)
+			opt_numlist.append(1)
+		else:
+			if curr_action == opt_actionlist[-1] and maze.is_visited(curr_vertex[0],curr_vertex[1]) and maze.is_visited(opt_vertexlist[-1][0],opt_vertexlist[-1][1]):
+				opt_vertexlist[-1] = curr_vertex
+				opt_numlist[-1] += 1
+			else:
+				opt_actionlist.append(curr_action)
+				opt_vertexlist.append(curr_vertex)
+				opt_numlist.append(1)
+	return opt_actionlist,opt_vertexlist,opt_numlist
+
+
+
+def is_outlier(data,sample=None):
     # by default apply only to the last element of the data
     if sample==None:
         sample = data[-1]
-
     median = np.median(data)
     mad = np.median(np.abs(data-median))
     score = 0.6745*(sample-median)/mad
-
-    #if np.abs(score) > 3.5:
-	#print(data)
-	#print()
-	#print(sample)
-	#print()
-	#print(score)
-	#print()
-        #input()
-
     return np.abs(score)>3.5
+
+
 
 def odom_callback(msg):
 	global pose
 	pose = msg.pose.pose
+
+
 
 def scan_callback(msg):
     # TODO this is a hack, use proper indexing
@@ -398,39 +414,34 @@ def scan_callback(msg):
     	if not is_outlier(rangeshist[i],msg.ranges[i]):
 		#robustranges[i] = msg.ranges[i]
 		robustranges[i] = np.median(rangeshist[i])
-
     ranges = [msg.ranges[0],msg.ranges[1], msg.ranges[2]]
-
-    #print(ranges)
-    #print(robustranges)
-    #print(rangeshist[1])
-    #print
-
     walls = [ ranges[0]*np.sin(np.deg2rad(fwd_angle)) < LEN, ranges[1]<LEN, ranges[2]*np.sin(np.deg2rad(fwd_angle)) < LEN ]
 
 
-def turn(action):
-    vel_msg = Twist()
+def turn(action,num_steps=1):
+	vel_msg = Twist()
 
-    vel_msg.linear.x = 0
-    vel_msg.angular.z = action*angspeed
-    r = rospy.Rate(10) # 10hz
+	if action=='L':
+		sign = 1
+	else:
+		sign = -1
+	vel_msg.linear.x = 0
+	vel_msg.angular.z = sign*angspeed
+	r = rospy.Rate(10) # 10hz
 
-    for i in range( int((np.pi/2)/angspeed*10) ):
+	for i in range( int(num_steps*(np.pi/2)/angspeed*10) ):
+		#Publish the velocity
+		vel_pub.publish(vel_msg)
+		r.sleep()
 
-        #Publish the velocity
-        vel_pub.publish(vel_msg)
-        r.sleep()
-
-    stop()
 
 def stop():
 	vel_pub.publish(Twist())
 
-def fwd_one_cell():
 
+def forward(num_steps=1):
 	vel_msg = Twist()
-	vel_msg.linear.x = linspeed
+	vel_msg.linear.x = linspeed*min(num_steps,2)
 
 	r = rospy.Rate(20) # hz
 	dist = 0
@@ -440,13 +451,14 @@ def fwd_one_cell():
 	fwall_hist = []
 	rwall_hist = []
 
-	while (robustranges[1] > LEN/2-0.035 and dist < LEN) or (dist < LEN/4):
+	while (robustranges[1] > LEN/2-0.035 and dist < num_steps*LEN) or (dist < LEN/4):
 
 		# keep track of the distance traveled
 		dist += np.sqrt((prev_pos.x - pose.position.x)*(prev_pos.x - pose.position.x) + (prev_pos.y - pose.position.y)*(prev_pos.y - pose.position.y))
 		prev_pos = pose.position
 
 		# most reliable wall information is between 40% to 60% distnace traveled
+		# this only works when you travel one step!
 		if dist > 2*LEN/5 and dist < 3*LEN/5:
 			rwall_hist.append(walls[0])
 			fwall_hist.append(walls[1])
@@ -461,106 +473,77 @@ def fwd_one_cell():
 			err = np.mean(err)
 		else:
 			err = 0
-
-		print(ranges)
-		print((LEN/2)/np.sin(np.deg2rad(fwd_angle)))
-		print(err)
-		print(walls)
-		print()
 		vel_msg.angular.z = err*kp
 		vel_pub.publish(vel_msg)
 		r.sleep()
 
-	stop()
 	return rwall_hist.count(True)>rwall_hist.count(False), fwall_hist.count(True)>fwall_hist.count(False), lwall_hist.count(True)>lwall_hist.count(False)
 
-# path is a list consisting of 'S','L','R' actions
-def execute_path(path):
 
-	global maze, gridgraph, dir
+def execute_action(action,num_steps):
+	r = None
+	f = None
+	l = None
 
-	# Draw maze
-	plt.axis([0, maze.dim+1, 0, maze.dim+1])
+	if action == 'F':
+		r,f,l = forward(num_steps)
+		stop()
+	elif action == 'R' or action == 'L':
+		turn(action,num_steps)
+		stop()
+	elif action == 'S':
+		stop()
+	return r,f,l
 
-	while len(path) > 0:
-		action = path.pop(0)
-		if action == 'S':
-			r,f,l = fwd_one_cell()
-			maze.update_cell(dir,r,f,l)
-			maze.update_pos(dir)
-		elif action == 'L':
-			dir = turn(LEFT,dir)
-		elif action == 'R':
-			dir = turn(RIGHT,dir)
-		else:
-			print("Wrong action")
-		maze.draw_maze()
 
 def goto(goal_row,goal_col):
-
 	# Draw maze
 	plt.axis([0, maze.dim+1, 0, maze.dim+1])
-	path = maze.get_path(goal_row,goal_col,None)
-	print(path)
+	actionlist,vertexlist = maze.get_path(goal_row,goal_col,None)
+	actionlist,_,numlist = get_optimized_path(actionlist,vertexlist,maze)
 
-	while len(path) > 0:
-		action = path.pop(0)
-		if action == 'S':
-			r,f,l = fwd_one_cell()
-			maze.update_pose(STRAIGHT)
+	while len(actionlist) > 0:
+		action = actionlist.pop(0)
+		num_steps = numlist.pop(0)
+		r,f,l = execute_action(action,num_steps)
+		maze.update_pose(action,num_steps)
+		print(maze.curr_row, maze.curr_col, maze.curr_dir)
+
+		if action == 'F' and num_steps == 1:
 			maze.update_cell(r,f,l)
+			actionlist,vertexlist = maze.get_path(goal_row,goal_col,None)
+			actionlist,_,numlist = get_optimized_path(actionlist,vertexlist,maze)
 
-			print(maze.curr_row, maze.curr_col, maze.curr_dir)
-
-			path = maze.get_path(goal_row,goal_col,None)
-
-		elif action == 'L':
-			turn(LEFT)
-			maze.update_pose(LEFT)
-		elif action == 'R':
-			turn(RIGHT)
-			maze.update_pose(RIGHT)
-		else:
-			print("Wrong action")
 		#maze.print_maze()
 		maze.draw_maze()
-		#print(path)
-
-	#plt.show()
 
 
+def test():
 
-def wallfollow():
+	# Starts a new node
+	rospy.init_node('vayu', anonymous=False)
+	rospy.Subscriber('/kbot/laser_scan/scan', LaserScan, scan_callback, queue_size=1)
+	rospy.Subscriber('/kbot/base_controller/odom', Odometry, odom_callback, queue_size=1)
+    # wait until you get first scan
+	r = rospy.Rate(10)
+	while len(ranges) < 3:
+		print("Waiting for scan")
+		print(ranges)
+		r.sleep()
 
-	global maze, gridgraph, dir
+	maze = Maze(4,0,0)
+	maze.update_cell(True,False,True,0,0,'N')
+	maze.update_cell(True,False,True,1,0,'N')
+	maze.update_cell(True,False,True,2,0,'N')
+	maze.update_cell(False,False,True,3,0,'N')
 
-	# Maze
-	#maze = Maze(7,0,0)
-	#gridgraph = GridGraph(7)
-	#dir = 0
-
-	# Draw maze
-	plt.axis([0, maze.dim+1, 0, maze.dim+1])
-
-	while True:
-		maze.draw_maze()
-		r,f,l = fwd_one_cell()
-		maze.update_pos(dir)
-		maze.update_cell(dir,r,f,l)
-		gridgraph.update_edges(maze.curr_row,maze.curr_col,DIRS[dir],r,f,l)
-
-		maze.print_maze()
-		print(maze.curr_row,maze.curr_col)
-		print(r,f,l)
-
-		if r == False and f == True:
-			dir = turn(RIGHT,dir)
-		elif l == False and f == True:
-			dir = turn(LEFT,dir)
-		elif f==True:
-			dir = turn(RIGHT,dir)
-			dir = turn(RIGHT,dir)
-	plt.show()
+	actionlist,vertexlist = maze.get_path(3,3,'N')
+	print(actionlist)
+	print(vertexlist)
+	actionlist,vertexlist,numlist = get_optimized_path(actionlist,vertexlist,maze)
+	for a,n,v in zip(actionlist,numlist,vertexlist):
+		print(a,n,v)
+		execute_action(a,n)
 
 def init():
     global ranges, maze
@@ -569,9 +552,6 @@ def init():
     rospy.init_node('vayu', anonymous=False)
     rospy.Subscriber('/kbot/laser_scan/scan', LaserScan, scan_callback, queue_size=1)
     rospy.Subscriber('/kbot/base_controller/odom', Odometry, odom_callback, queue_size=1)
-
-    maze = Maze(4,0,0)
-
     # wait until you get first scan
     r = rospy.Rate(10)
     while len(ranges) < 3:
@@ -579,24 +559,18 @@ def init():
 	print(ranges)
 	r.sleep()
 
+    maze = Maze(8,0,0)
+
     #wallfollow()
-    goto(1,2)
+    goto(3,4)
     goto(0,0)
-    goto(1,2)
+    goto(3,4)
     goto(0,0)
-
-#execute_path(['S','R','S','S','S','L','S','L','S','R','S','R','S','L','S','R','S','R','S','S','S','S','L','S','L','S','S','S','S','S','S'])
-
-    #fwd()
-    #turn(1)
-    #turn(-1)
-    #fwd()
-    #fwd()
-    #fwd()
 
 
 if __name__ == '__main__':
     try:
         #Testing our function
+		#test()
         init()
     except rospy.ROSInterruptException: pass
