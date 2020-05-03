@@ -20,15 +20,17 @@ ranges = []
 walls = []
 pose = []
 
+# Actions
 LEFT = 1
+STRAIGHT = 0
 RIGHT = -1
-DIRS = ['N','W','S','E']
+
+DIRS = {'N':0,'W':1,'S':2,'E':3, 0:'N', 1:'W', 2:'S', 3:'E'} # bijective mapping to keep it easier to do modular math
 ACTIONS = ['L','S','R']
 COSTS = {'S': 1, 'L': 5, 'R': 5}
 
 # Maze
 maze = []
-gridgraph = []
 dir = 0
 
 
@@ -198,9 +200,21 @@ class Cell():
 		self.south = s
 		self.east = e
 		self.west = w
+		self.set_visited()
+
+	def set_visited(self,flag=True):
+		self.visited = flag
+
+	def is_visited(self):
+		return self.visited
+
+	def draw_cell_marker(self,markercolor='r'):
+		# rows are y-coords, columns are x-coords
+		y = self.row
+		x = self.col
+		plt.plot([x+0.5],[y+0.5],marker='o',color=markercolor)
 
 	def draw_cell(self):
-
 		# rows are y-coords, columns are x-coords
 		y = self.row
 		x = self.col
@@ -229,6 +243,7 @@ class Cell():
 		self.west = False
 		self.row = r
 		self.col = c
+		self.visited = False
 
 class Maze():
 
@@ -242,72 +257,108 @@ class Maze():
 		for r in range(self.dim):
 			for c in range(self.dim):
 				self.cells[r][c].draw_cell()
-		plt.pause(0.1)
+				if self.cells[r][c].is_visited():
+					self.cells[r][c].draw_cell_marker('b')
 
-	def update_pos(self,dir):
-		if DIRS[dir] == 'N':
-			self.set_curr_pos(self.curr_row+1,self.curr_col)
-		elif DIRS[dir] == 'S':
-			self.set_curr_pos(self.curr_row-1,self.curr_col)
-		elif DIRS[dir] == 'E':
-			self.set_curr_pos(self.curr_row,self.curr_col+1)
-		elif DIRS[dir] == 'W':
-			self.set_curr_pos(self.curr_row,self.curr_col-1)
+		self.cells[self.curr_row][self.curr_col].draw_cell_marker('g')
+		plt.pause(0.01)
 
-	def update_cell(self,dir,rwall,fwall,lwall,row=None,col=None):
+	def get_path(self,goal_row,goal_col,goal_dir,start_row=None,start_col=None,start_dir=None):
+		if start_row == None:
+			start_row = self.curr_row
+		if start_col == None:
+			start_col = self.curr_col
+		if start_dir == None:
+			start_dir = self.curr_dir
+		if goal_dir == None:
+			goal_dir = 'S'
+		path = self.gridgraph.get_path( (start_row,start_col,start_dir), (goal_row,goal_col,goal_dir) )
+		return path
+
+	def update_pose(self,action):
+		if action ==  STRAIGHT:
+			if self.curr_dir == 'N':
+				self.set_curr_pose(self.curr_row+1,self.curr_col,self.curr_dir)
+			elif self.curr_dir == 'S':
+				self.set_curr_pose(self.curr_row-1,self.curr_col,self.curr_dir)
+			elif self.curr_dir == 'E':
+				self.set_curr_pose(self.curr_row,self.curr_col+1,self.curr_dir)
+			elif self.curr_dir == 'W':
+				self.set_curr_pose(self.curr_row,self.curr_col-1,self.curr_dir)
+		elif action == RIGHT:
+			self.set_curr_pose(self.curr_row,self.curr_col,DIRS[np.mod(DIRS[self.curr_dir]-1,4)])
+		elif action == LEFT:
+			self.set_curr_pose(self.curr_row,self.curr_col,DIRS[np.mod(DIRS[self.curr_dir]+1,4)])
+		else:
+			rospy.logwarn('Wrong action in update_pose')
+
+	def update_cell(self,rwall,fwall,lwall,row=None,col=None,dir=None,visited=True):
 		if row == None:
 			row = self.curr_row
 		if col == None:
 			col = self.curr_col
-		if DIRS[dir] == 'N':
+		if dir == None:
+			dir = self.curr_dir
+
+		if dir == 'N':
 			self.set_wall('E',rwall,row,col)
 			self.set_wall('N',fwall,row,col)
 			self.set_wall('W',lwall,row,col)
-		elif DIRS[dir] == 'S':
+		elif dir == 'S':
 			self.set_wall('W',rwall,row,col)
 			self.set_wall('S',fwall,row,col)
 			self.set_wall('E',lwall,row,col)
-		elif DIRS[dir] == 'E':
+		elif dir == 'E':
 			self.set_wall('S',rwall,row,col)
 			self.set_wall('E',fwall,row,col)
 			self.set_wall('N',lwall,row,col)
-		elif DIRS[dir] == 'W':
+		elif dir == 'W':
 			self.set_wall('N',rwall,row,col)
 			self.set_wall('W',fwall,row,col)
 			self.set_wall('S',lwall,row,col)
 
-	def set_wall(self,dir,exists=True,row=None,col=None):
+		self.cells[row][col].set_visited(visited)
+		self.gridgraph.update_edges(row,col,dir,rwall,fwall,lwall)
+
+	def is_visited(self,row,col):
+		return self.cells[row,col].is_visited()
+
+	def set_wall(self,walldir,exists=True,row=None,col=None):
 		if row == None:
 			row = self.curr_row
 		if col == None:
 			col = self.curr_col
-		if dir == 'N':
+
+		if walldir == 'N':
 			self.cells[row][col].north = exists
 			if row < self.dim-1:
 				self.cells[row+1][col].south = exists
-		if dir == 'S':
+		if walldir == 'S':
 			self.cells[row][col].south = exists
 			if row > 0:
 				self.cells[row-1][col].north = exists
-		if dir == 'E':
+		if walldir == 'E':
 			self.cells[row][col].east = exists
 			if col < self.dim-1:
 				self.cells[row][col+1].west = exists
-		if dir == 'W':
+		if walldir == 'W':
 			self.cells[row][col].west = exists
 			if col > 0:
 				self.cells[row][col-1].east = exists
 
 
-	def set_curr_pos(self,r,c):
+	def set_curr_pose(self,r,c,dir):
 		self.curr_row = r
 		self.curr_col = c
+		self.curr_dir = dir
 
-	def __init__(self, dim, init_row=0, init_col=0):
+	def __init__(self, dim, init_row=0, init_col=0, init_dir='N'):
 		self.dim = dim
 		self.cells = [[Cell(r,c) for c in range(dim)] for r in range(dim)]
 		self.curr_row = init_row
 		self.curr_col = init_col
+		self.curr_dir = init_dir
+		self.gridgraph = GridGraph(dim)
 
 
 def is_outlier(data,sample=None):
@@ -347,8 +398,8 @@ def scan_callback(msg):
     	if not is_outlier(rangeshist[i],msg.ranges[i]):
 		#robustranges[i] = msg.ranges[i]
 		robustranges[i] = np.median(rangeshist[i])
-    
-    ranges = [msg.ranges[0],msg.ranges[1], msg.ranges[2]] 
+
+    ranges = [msg.ranges[0],msg.ranges[1], msg.ranges[2]]
 
     #print(ranges)
     #print(robustranges)
@@ -356,9 +407,9 @@ def scan_callback(msg):
     #print
 
     walls = [ ranges[0]*np.sin(np.deg2rad(fwd_angle)) < LEN, ranges[1]<LEN, ranges[2]*np.sin(np.deg2rad(fwd_angle)) < LEN ]
-    
 
-def turn(action,dir):
+
+def turn(action):
     vel_msg = Twist()
 
     vel_msg.linear.x = 0
@@ -372,18 +423,6 @@ def turn(action,dir):
         r.sleep()
 
     stop()
-    if action == RIGHT:
-        if dir == 0:
-	    dir = 3
-	else:
-	    dir = dir-1
-    else:
-	if dir == 3:
-	    dir = 0
-	else:
-	    dir = dir+1
-
-    return dir
 
 def stop():
 	vel_pub.publish(Twist())
@@ -459,27 +498,28 @@ def execute_path(path):
 
 def goto(goal_row,goal_col):
 
-	global dir
-	#global maze, gridgraph
-
 	# Draw maze
 	plt.axis([0, maze.dim+1, 0, maze.dim+1])
-	path = gridgraph.get_path( (maze.curr_row,maze.curr_col,DIRS[dir]), (goal_row,goal_col,'N') )
+	path = maze.get_path(goal_row,goal_col,None)
+	print(path)
 
 	while len(path) > 0:
 		action = path.pop(0)
 		if action == 'S':
 			r,f,l = fwd_one_cell()
-			maze.update_pos(dir)
-			print(maze.curr_row, maze.curr_col)
-			maze.update_cell(dir,r,f,l)
-			gridgraph.update_edges(maze.curr_row,maze.curr_col,DIRS[dir],r,f,l)
-			path = gridgraph.get_path( (maze.curr_row,maze.curr_col,DIRS[dir]), (goal_row,goal_col,'N') )
+			maze.update_pose(STRAIGHT)
+			maze.update_cell(r,f,l)
+
+			print(maze.curr_row, maze.curr_col, maze.curr_dir)
+
+			path = maze.get_path(goal_row,goal_col,None)
 
 		elif action == 'L':
-			dir = turn(LEFT,dir)
+			turn(LEFT)
+			maze.update_pose(LEFT)
 		elif action == 'R':
-			dir = turn(RIGHT,dir)
+			turn(RIGHT)
+			maze.update_pose(RIGHT)
 		else:
 			print("Wrong action")
 		#maze.print_maze()
@@ -501,7 +541,7 @@ def wallfollow():
 
 	# Draw maze
 	plt.axis([0, maze.dim+1, 0, maze.dim+1])
-	
+
 	while True:
 		maze.draw_maze()
 		r,f,l = fwd_one_cell()
@@ -523,7 +563,7 @@ def wallfollow():
 	plt.show()
 
 def init():
-    global ranges, maze, gridgraph
+    global ranges, maze
 
     # Starts a new node
     rospy.init_node('vayu', anonymous=False)
@@ -531,7 +571,6 @@ def init():
     rospy.Subscriber('/kbot/base_controller/odom', Odometry, odom_callback, queue_size=1)
 
     maze = Maze(4,0,0)
-    gridgraph = GridGraph(4)
 
     # wait until you get first scan
     r = rospy.Rate(10)
@@ -545,7 +584,7 @@ def init():
     goto(0,0)
     goto(1,2)
     goto(0,0)
-    
+
 #execute_path(['S','R','S','S','S','L','S','L','S','R','S','R','S','L','S','R','S','R','S','S','S','S','L','S','L','S','S','S','S','S','S'])
 
     #fwd()
@@ -561,4 +600,3 @@ if __name__ == '__main__':
         #Testing our function
         init()
     except rospy.ROSInterruptException: pass
-
