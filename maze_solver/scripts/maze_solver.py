@@ -7,11 +7,12 @@ from geometry_msgs.msg import Twist
 from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import Odometry
 
-linspeed = 0.05
-angspeed = np.pi/2
+linspeed = 0.1
+angspeed = np.pi/1
 LEN = 0.18
 vel_pub = rospy.Publisher('/kbot/base_controller/cmd_vel', Twist, queue_size=10)
-kp = -4
+kp = -6
+kd = 0
 fwd_angle = 60
 
 rangeshist = [collections.deque(maxlen=10), collections.deque(maxlen=10), collections.deque(maxlen=1)]
@@ -21,8 +22,8 @@ walls = []
 pose = []
 
 DIRS = {'N':0,'W':1,'S':2,'E':3, 0:'N', 1:'W', 2:'S', 3:'E'} # bijective mapping to keep it easier to do modular math
-ACTIONS = ['L','F','R','S']
-COSTS = {'F': 1, 'L': 5, 'R': 5}
+ACTIONS = ['L','F','R','S','FRF']
+COSTS = {'F': 1, 'L': 1, 'R': 1}
 
 # Maze
 maze = []
@@ -271,23 +272,25 @@ class Maze():
 		return path
 
 	def update_pose(self,action,num_steps=1):
-		if action ==  'F':
-			if self.curr_dir == 'N':
-				self.set_curr_pose(self.curr_row+num_steps,self.curr_col,self.curr_dir)
-			elif self.curr_dir == 'S':
-				self.set_curr_pose(self.curr_row-num_steps,self.curr_col,self.curr_dir)
-			elif self.curr_dir == 'E':
-				self.set_curr_pose(self.curr_row,self.curr_col+num_steps,self.curr_dir)
-			elif self.curr_dir == 'W':
-				self.set_curr_pose(self.curr_row,self.curr_col-num_steps,self.curr_dir)
-		elif action == 'R':
-			self.set_curr_pose(self.curr_row,self.curr_col,DIRS[np.mod(DIRS[self.curr_dir]-num_steps,4)])
-		elif action == 'L':
-			self.set_curr_pose(self.curr_row,self.curr_col,DIRS[np.mod(DIRS[self.curr_dir]+num_steps,4)])
-		elif action == 'S':
-			self.set_curr_pose(self.curr_row,self.curr_col,self.curr_dir)
-		else:
-			rospy.logwarn('Wrong action in update_pose')
+		action = action[:-1]+action[-1]*num_steps
+		for a in action:
+			if a ==  'F':
+				if self.curr_dir == 'N':
+					self.set_curr_pose(self.curr_row+1,self.curr_col,self.curr_dir)
+				elif self.curr_dir == 'S':
+					self.set_curr_pose(self.curr_row-1,self.curr_col,self.curr_dir)
+				elif self.curr_dir == 'E':
+					self.set_curr_pose(self.curr_row,self.curr_col+1,self.curr_dir)
+				elif self.curr_dir == 'W':
+					self.set_curr_pose(self.curr_row,self.curr_col-1,self.curr_dir)
+			elif a == 'R':
+				self.set_curr_pose(self.curr_row,self.curr_col,DIRS[np.mod(DIRS[self.curr_dir]-1,4)])
+			elif a == 'L':
+				self.set_curr_pose(self.curr_row,self.curr_col,DIRS[np.mod(DIRS[self.curr_dir]+1,4)])
+			elif a == 'S':
+				self.set_curr_pose(self.curr_row,self.curr_col,self.curr_dir)
+			else:
+				rospy.logwarn('Wrong action in update_pose')
 
 	def update_cell(self,rwall,fwall,lwall,row=None,col=None,dir=None,visited=True):
 		if row == None:
@@ -381,7 +384,45 @@ def get_optimized_path(actionlist,vertexlist,maze):
 				opt_actionlist.append(curr_action)
 				opt_vertexlist.append(curr_vertex)
 				opt_numlist.append(1)
-	return opt_actionlist,opt_vertexlist,opt_numlist
+
+	# now add smooth turns
+	idx = 1
+	smooth_actionlist = []
+	smooth_vertexlist = []
+	smooth_numlist = []
+	while len(opt_actionlist) > 0:
+
+		curr_action = opt_actionlist.pop(0)
+		curr_vertex = opt_vertexlist.pop(0)
+		curr_num = opt_numlist.pop(0)
+
+		#print(curr_action)
+		#print(curr_vertex)
+		#print(curr_num)
+		#print(opt_actionlist)
+		#print()
+
+		if len(opt_actionlist) > 2:
+			if curr_action == 'F' and (opt_actionlist[0] == 'R' or opt_actionlist[0] == 'L') and opt_actionlist[1] == 'F' and curr_num == 1 and maze.is_visited(curr_vertex[0],curr_vertex[1]) and maze.is_visited(opt_vertexlist[1][0],opt_vertexlist[1][1]):
+				smooth_actionlist.append('F'+opt_actionlist[0]+'F')
+				smooth_vertexlist.append(opt_vertexlist[1])
+				smooth_numlist.append(opt_numlist[1])
+				opt_actionlist.pop(0)
+				opt_actionlist.pop(0)
+				opt_vertexlist.pop(0)
+				opt_vertexlist.pop(0)
+				opt_numlist.pop(0)
+				opt_numlist.pop(0)
+			else:
+				smooth_actionlist.append(curr_action)
+				smooth_vertexlist.append(curr_vertex)
+				smooth_numlist.append(curr_num)
+		else:
+			smooth_actionlist.append(curr_action)
+			smooth_vertexlist.append(curr_vertex)
+			smooth_numlist.append(curr_num)
+	return smooth_actionlist,smooth_vertexlist,smooth_numlist
+	#return opt_actionlist,opt_vertexlist,opt_numlist
 
 
 
@@ -439,27 +480,55 @@ def stop():
 	vel_pub.publish(Twist())
 
 
-def forward(num_steps=1):
+def smoothturn(action,num_steps = 1):
+	# this is always a half a cell forward, then turn, then half a cell forward again
+	# this replaces a FRF or FLF combo
+	
 	vel_msg = Twist()
-	vel_msg.linear.x = linspeed*min(num_steps,2)
+	if action=='L':
+		sign = 1
+	else:
+		sign = -1
+
+	radius = 0.05	# radius of the turn
+	t = 0.5		# how much time to complete the turn
+
+	forward( (LEN-0.05)/LEN, False)
+	r = rospy.Rate(10)
+	for i in range( int(10*t) ):
+		vel_msg.linear.x = (np.pi/2*radius)/t
+		vel_msg.angular.z = sign*(np.pi/2)/t
+		vel_pub.publish(vel_msg)
+		r.sleep()	
+
+	forward( (LEN-0.05)/LEN, True)
+
+	if num_steps > 1:
+		forward(num_steps-1)
+
+
+def forward(num_steps=1, fwd_corr = True):
+	vel_msg = Twist()
+	vel_msg.linear.x = linspeed*min(max(num_steps,1),2.5)
 
 	r = rospy.Rate(20) # hz
 	dist = 0
+	prev_err = 0
 	prev_pos = pose.position
 
 	lwall_hist = []
 	fwall_hist = []
 	rwall_hist = []
 
-	while (robustranges[1] > LEN/2-0.035 and dist < num_steps*LEN) or (dist < LEN/4):
+	while (robustranges[1] > LEN/2-0.04 and dist < num_steps*LEN) or (dist < LEN/4):
 
 		# keep track of the distance traveled
 		dist += np.sqrt((prev_pos.x - pose.position.x)*(prev_pos.x - pose.position.x) + (prev_pos.y - pose.position.y)*(prev_pos.y - pose.position.y))
 		prev_pos = pose.position
 
-		# most reliable wall information is between 40% to 60% distnace traveled
-		# this only works when you travel one step!
-		if dist > 2*LEN/5 and dist < 3*LEN/5:
+		# most reliable wall information is between x% to y% distance traveled
+		# this only works for the last step!
+		if dist > (2*LEN/10 + (num_steps-1)*LEN) and dist < (4*LEN/10 + (num_steps-1)*LEN):
 			rwall_hist.append(walls[0])
 			fwall_hist.append(walls[1])
 			lwall_hist.append(walls[2])
@@ -473,11 +542,32 @@ def forward(num_steps=1):
 			err = np.mean(err)
 		else:
 			err = 0
-		vel_msg.angular.z = err*kp
+		vel_msg.angular.z = err*kp + (err-prev_err)*kd
+		prev_err = err
 		vel_pub.publish(vel_msg)
 		r.sleep()
 
-	return rwall_hist.count(True)>rwall_hist.count(False), fwall_hist.count(True)>fwall_hist.count(False), lwall_hist.count(True)>lwall_hist.count(False)
+	rwall= rwall_hist.count(True)>rwall_hist.count(False)
+	fwall = fwall_hist.count(True)>fwall_hist.count(False)
+	lwall = lwall_hist.count(True)>lwall_hist.count(False)
+	
+	# forward correction only when there is a front wall
+	if fwall and fwd_corr:
+		r = rospy.Rate(20) # hz
+		timeout = 20*5
+		k_angcorr = 2
+		k_lincorr = 2
+		while (np.abs(ranges[0]-ranges[2]) > 0.002 or ranges[1] - np.abs((LEN/2 - 0.04)) > 0.002) and timeout > 0:
+			print(ranges[0],ranges[2])
+			print(ranges[1],(LEN/2 - 0.05))
+			print()
+			vel_msg.linear.x =  (ranges[1] - (LEN/2 - 0.04))*k_lincorr
+			vel_msg.angular.z = (ranges[0]-ranges[2])*k_angcorr
+			vel_pub.publish(vel_msg)
+			timeout -= 1
+			r.sleep()
+	
+	return rwall, fwall, lwall
 
 
 def execute_action(action,num_steps):
@@ -492,6 +582,12 @@ def execute_action(action,num_steps):
 		turn(action,num_steps)
 		stop()
 	elif action == 'S':
+		stop()
+	elif action == 'FRF':
+		smoothturn('R',num_steps)
+		stop()
+	elif action == 'FLF':
+		smoothturn('L',num_steps)
 		stop()
 	return r,f,l
 
@@ -512,10 +608,10 @@ def goto(goal_row,goal_col):
 		if action == 'F' and num_steps == 1:
 			maze.update_cell(r,f,l)
 			actionlist,vertexlist = maze.get_path(goal_row,goal_col,None)
-			actionlist,_,numlist = get_optimized_path(actionlist,vertexlist,maze)
-
+			actionlist,vertexlist,numlist = get_optimized_path(actionlist,vertexlist,maze)
+			
 		#maze.print_maze()
-		maze.draw_maze()
+	maze.draw_maze()
 
 
 def test():
@@ -524,26 +620,30 @@ def test():
 	rospy.init_node('vayu', anonymous=False)
 	rospy.Subscriber('/kbot/laser_scan/scan', LaserScan, scan_callback, queue_size=1)
 	rospy.Subscriber('/kbot/base_controller/odom', Odometry, odom_callback, queue_size=1)
-    # wait until you get first scan
+	# wait until you get first scan
 	r = rospy.Rate(10)
 	while len(ranges) < 3:
 		print("Waiting for scan")
 		print(ranges)
 		r.sleep()
 
-	maze = Maze(4,0,0)
-	maze.update_cell(True,False,True,0,0,'N')
-	maze.update_cell(True,False,True,1,0,'N')
-	maze.update_cell(True,False,True,2,0,'N')
-	maze.update_cell(False,False,True,3,0,'N')
-
-	actionlist,vertexlist = maze.get_path(3,3,'N')
+	maze = Maze(5,0,0)
+	maze.update_cell(False,True,True,0,0,'N')
+	maze.update_cell(True,False,True,0,1,'E')
+	maze.update_cell(True,False,True,0,2,'E')
+	maze.update_cell(True,False,True,0,3,'E')
+	maze.update_cell(True,True,False,0,4,'E')
+	maze.update_cell(True,False,False,1,4,'N')
+	maze.update_cell(False,True,True,1,3,'W')
+	
+	actionlist,vertexlist = maze.get_path(0,0,'W',1,3,'E')
 	print(actionlist)
 	print(vertexlist)
 	actionlist,vertexlist,numlist = get_optimized_path(actionlist,vertexlist,maze)
-	for a,n,v in zip(actionlist,numlist,vertexlist):
-		print(a,n,v)
-		execute_action(a,n)
+	print(actionlist)
+	print(numlist)
+	print(vertexlist)
+	
 
 def init():
     global ranges, maze
@@ -559,18 +659,18 @@ def init():
 	print(ranges)
 	r.sleep()
 
-    maze = Maze(8,0,0)
+    maze = Maze(16,0,0)
 
     #wallfollow()
-    goto(3,4)
+    goto(8,8)
     goto(0,0)
-    goto(3,4)
+    goto(8,8)
     goto(0,0)
 
 
 if __name__ == '__main__':
     try:
         #Testing our function
-		#test()
+	#test()
         init()
     except rospy.ROSInterruptException: pass

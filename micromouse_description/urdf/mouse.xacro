@@ -8,7 +8,7 @@
   <xacro:property name="wheel_separation" value="${(base_width+2*base_wheel_gap)}"/>
   <xacro:property name="wheel_thickness" value="0.005"/>
   <xacro:property name="base_wheel_gap" value="${wheel_thickness/2}"/>
-  <xacro:property name="wheel_joint_offset" value="0.01"/>
+  <xacro:property name="wheel_joint_offset" value="-0.01"/>
 
   <xacro:property name="caster_wheel_radius" value="0.005"/>
   <xacro:property name="caster_wheel_mass" value="0.001"/>
@@ -72,14 +72,14 @@
 
 <link name="back_caster_link">
 <visual>
-      <origin xyz="-${caster_wheel_offset} 0 -${base_thickness/2+caster_wheel_radius}" rpy="0 0 0"/>
+      <origin xyz="${caster_wheel_offset} 0 -${base_thickness/2+caster_wheel_radius}" rpy="0 0 0"/>
       <geometry>
 	<sphere radius="${caster_wheel_radius}"/>
       </geometry>
       <material name="black"/>
     </visual>
     <collision>
-      <origin xyz="-${caster_wheel_offset} 0 -${base_thickness/2+caster_wheel_radius}" rpy="0 0 0"/>
+      <origin xyz="${caster_wheel_offset} 0 -${base_thickness/2+caster_wheel_radius}" rpy="0 0 0"/>
       <geometry>
         <sphere radius="${caster_wheel_radius}"/>
       </geometry>
