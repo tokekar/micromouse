@@ -48,6 +48,36 @@
               <minDepth>0</minDepth>
   </gazebo>
 
+  <gazebo reference="circuit_link">
+    <material>Gazebo/Black</material>
+              <mu1>10</mu1>
+              <mu2>10</mu2>
+              <kp>1000000.0</kp>
+              <kd>100.0</kd>
+              <maxVel>0.01</maxVel>
+              <minDepth>0</minDepth>
+  </gazebo>
+
+  <gazebo reference="left_motor">
+    <material>Gazebo/Grey</material>
+              <mu1>10</mu1>
+              <mu2>10</mu2>
+              <kp>1000000.0</kp>
+              <kd>100.0</kd>
+              <maxVel>0.01</maxVel>
+              <minDepth>0</minDepth>
+  </gazebo>
+
+  <gazebo reference="right_motor">
+    <material>Gazebo/Grey</material>
+              <mu1>10</mu1>
+              <mu2>10</mu2>
+              <kp>1000000.0</kp>
+              <kd>100.0</kd>
+              <maxVel>0.01</maxVel>
+              <minDepth>0</minDepth>
+  </gazebo>
+
   <gazebo reference="base_link">
     <material>Gazebo/Green</material>
               <mu1>1</mu1>
@@ -63,14 +93,14 @@
     <plugin name="differential_drive_controller" filename="libgazebo_ros_diff_drive.so">
       <alwaysOn>false</alwaysOn>
       <legacyMode>false</legacyMode>
-      <updateRate>30</updateRate>
+      <updateRate>100</updateRate>
       <leftJoint>left_wheel_joint</leftJoint>
       <rightJoint>right_wheel_joint</rightJoint>
       <wheelSeparation>${wheel_separation}</wheelSeparation>
       <wheelDiameter>${wheel_radius * 2}</wheelDiameter>
       <torque>20</torque>
-      <commandTopic>/kbot/base_controller/cmd_vel</commandTopic>
-      <odometryTopic>/kbot/base_controller/odom</odometryTopic>
+      <commandTopic>cmd_vel</commandTopic>
+      <odometryTopic>odom</odometryTopic>
       <odometryFrame>odom</odometryFrame>
       <robotBaseFrame>base_footprint</robotBaseFrame>
     </plugin>
@@ -80,8 +110,8 @@
   <gazebo reference="sensor_laser">
     <sensor type="ray" name="head_hokuyo_sensor">
       <pose>0 0 0 0 0 0</pose>
-      <visualize>true</visualize>
-      <update_rate>20</update_rate>
+      <visualize>false</visualize>
+      <update_rate>100</update_rate>
       <ray>
         <scan>
           <horizontal>
@@ -93,7 +123,7 @@
         </scan>
         <range>
           <min>0.01</min>
-          <max>2</max>
+          <max>1</max>
           <resolution>0.005</resolution>
         </range>
         <noise>
@@ -103,7 +133,7 @@
         </noise>
       </ray>
       <plugin name="gazebo_ros_head_hokuyo_controller" filename="libgazebo_ros_laser.so">
-        <topicName>/kbot/laser_scan/scan</topicName>
+        <topicName>scan</topicName>
         <frameName>sensor_laser</frameName>
       </plugin>
     </sensor>

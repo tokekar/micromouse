@@ -1,26 +1,32 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="vayu">
 
-  <xacro:property name="base_width" value="0.07"/>
-  <xacro:property name="base_len" value="0.07"/>
-  <xacro:property name="base_thickness" value="0.02"/>
+  <xacro:property name="mouse_width" value="0.075"/>
+  <xacro:property name="mouse_len" value="0.10"/>
+
+  <xacro:property name="base_width" value="${mouse_width-2*wheel_thickness-2*base_wheel_gap}"/>
+  <xacro:property name="base_len" value="${2*wheel_radius}"/>
+  <xacro:property name="base_thickness" value="0.005"/>
+  <xacro:property name="base_wheel_gap" value="${0.001}"/>
+  <xacro:property name="base_curve_radius" value="0.03"/>
+  <xacro:property name="base_zoffset" value="${(wheel_radius-caster_wheel_radius*2-base_thickness/2)}"/>
+
   <xacro:property name="wheel_radius" value="0.02"/>
-  <xacro:property name="wheel_separation" value="${(base_width+2*base_wheel_gap)}"/>
-  <xacro:property name="wheel_thickness" value="0.005"/>
-  <xacro:property name="base_wheel_gap" value="${wheel_thickness/2}"/>
+  <xacro:property name="wheel_separation" value="${(base_width+2*base_wheel_gap+wheel_thickness)}"/>
+  <xacro:property name="wheel_thickness" value="0.01"/>
   <xacro:property name="wheel_joint_offset" value="-0.01"/>
 
   <xacro:property name="caster_wheel_radius" value="0.005"/>
   <xacro:property name="caster_wheel_mass" value="0.001"/>
-  <xacro:property name="caster_wheel_offset" value="${base_len/2-caster_wheel_radius}"/>
+  <xacro:property name="caster_wheel_offset" value="${mouse_len+wheel_joint_offset-base_len/2-caster_wheel_radius}"/>
   <xacro:property name="caster_support_length" value="${wheel_radius-base_thickness/2-2*caster_wheel_radius-0.001}"/>
 
-  <xacro:property name="laser_size_x" value="0.01"/>
-  <xacro:property name="laser_size_y" value="0.01"/>
-  <xacro:property name="laser_size_z" value="0.01"/>
-  <xacro:property name="laser_origin_x" value="${base_len/2}"/>
+  <xacro:property name="laser_size_x" value="0.005"/>
+  <xacro:property name="laser_size_y" value="0.005"/>
+  <xacro:property name="laser_size_z" value="0.005"/>
+  <xacro:property name="laser_origin_x" value="${mouse_len+wheel_joint_offset-base_len/2-laser_size_x/2}"/>
   <xacro:property name="laser_origin_y" value="0"/>
-  <xacro:property name="laser_origin_z" value="0"/>
+  <xacro:property name="laser_origin_z" value="-${base_zoffset-base_thickness/2-laser_size_z/2}"/>
 
   <!--Color Properties-->
   <material name="blue">
@@ -47,16 +53,76 @@
   <!--Base link-->
   <link name="base_link">
     <visual>
+      <origin xyz="${wheel_joint_offset} 0 -${base_zoffset}" rpy="0 0 0"/>
       <geometry>
         <box size="${base_len} ${base_width} ${base_thickness}"/>
       </geometry>
       <material name="green"/>
     </visual>
+    <visual>
+      <origin xyz="${wheel_joint_offset+base_len/2+(mouse_len-base_len-base_curve_radius)/2} 0 -${base_zoffset}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${(mouse_len-base_len-base_curve_radius)} ${mouse_width} ${base_thickness}"/>
+      </geometry>
+      <material name="green"/>
+    </visual>
+    <visual>
+      <origin xyz="${wheel_joint_offset+base_len/2+(mouse_len-base_len-base_curve_radius)} ${mouse_width/2-base_curve_radius} -${base_zoffset}" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="${base_curve_radius}" length="${base_thickness}"/>
+      </geometry>
+      <material name="green"/>
+    </visual>
+    <visual>
+      <origin xyz="${wheel_joint_offset+base_len/2+(mouse_len-base_len-base_curve_radius)} -${mouse_width/2-base_curve_radius} -${base_zoffset}" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="${base_curve_radius}" length="${base_thickness}"/>
+      </geometry>
+      <material name="green"/>
+    </visual>
+    <visual>
+      <origin xyz="${wheel_joint_offset+base_len/2+mouse_len-base_len-base_curve_radius/2} 0 -${base_zoffset}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${base_curve_radius} ${mouse_width-2*base_curve_radius} ${base_thickness}"/>
+      </geometry>
+      <material name="green"/>
+    </visual>
+
     <collision name="base_collision">
+      <origin xyz="${wheel_joint_offset} 0 -${base_zoffset}" rpy="0 0 0"/>
       <geometry>
         <box size="${base_len} ${base_width} ${base_thickness}"/>
       </geometry>
     </collision>
+    <collision name="base_1_collision">
+      <origin xyz="${wheel_joint_offset+base_len/2+(mouse_len-base_len-base_curve_radius)/2} 0 -${base_zoffset}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${(mouse_len-base_len-base_curve_radius)} ${mouse_width} ${base_thickness}"/>
+      </geometry>
+      <material name="green"/>
+    </collision>
+    <collision name="base_2_collision">
+      <origin xyz="${wheel_joint_offset+base_len/2+(mouse_len-base_len-base_curve_radius)} ${mouse_width/2-base_curve_radius} -${base_zoffset}" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="${base_curve_radius}" length="${base_thickness}"/>
+      </geometry>
+      <material name="green"/>
+    </collision>
+    <collision name="base_3_collision">
+      <origin xyz="${wheel_joint_offset+base_len/2+(mouse_len-base_len-base_curve_radius)} -${mouse_width/2-base_curve_radius} -${base_zoffset}" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="${base_curve_radius}" length="${base_thickness}"/>
+      </geometry>
+      <material name="green"/>
+    </collision>
+    <collision name="base_4_collision">
+      <origin xyz="${wheel_joint_offset+base_len/2+mouse_len-base_len-base_curve_radius/2} 0 -${base_zoffset}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${base_curve_radius} ${mouse_width-2*base_curve_radius} ${base_thickness}"/>
+      </geometry>
+      <material name="green"/>
+    </collision>
+
     <inertial>
       <mass value="5"/>
       <inertia ixx="0.00022083" ixy="0.0" ixz="0.0" iyy="0.00022083" iyz="0.0" izz="0.00040833"/>
@@ -65,21 +131,38 @@
 
   <!--base_link to base_footprint Joint-->
   <joint name="base_link_joint" type="fixed">
-    <origin xyz="0 0 ${wheel_radius + 0.005}" rpy="0 0 0" />
+    <origin xyz="0 0 ${wheel_radius}" rpy="0 0 0" />
     <parent link="base_footprint"/>
     <child link="base_link" />
   </joint>
 
+  <link name="circuit_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <box size="${mouse_len/4} ${mouse_width/3} 0.001"/>
+      </geometry>
+      <material name="black"/>
+    </visual>
+  </link>
+
+  <joint name="circuit_joint" type="fixed">
+    <origin xyz="${wheel_joint_offset+base_len/2+(mouse_len-base_len-base_curve_radius)/2} 0 -${base_zoffset-base_thickness/2}" rpy="0 0 0" />
+    <parent link="base_link"/>
+    <child link="circuit_link" />
+  </joint>
+
+ 
 <link name="back_caster_link">
 <visual>
-      <origin xyz="${caster_wheel_offset} 0 -${base_thickness/2+caster_wheel_radius}" rpy="0 0 0"/>
+      <origin xyz="${caster_wheel_offset} 0 -${base_zoffset+base_thickness/2+caster_wheel_radius}" rpy="0 0 0"/>
       <geometry>
 	<sphere radius="${caster_wheel_radius}"/>
       </geometry>
       <material name="black"/>
     </visual>
     <collision>
-      <origin xyz="${caster_wheel_offset} 0 -${base_thickness/2+caster_wheel_radius}" rpy="0 0 0"/>
+      <origin xyz="${caster_wheel_offset} 0 -${base_zoffset+base_thickness/2+caster_wheel_radius}" rpy="0 0 0"/>
       <geometry>
         <sphere radius="${caster_wheel_radius}"/>
       </geometry>
@@ -91,28 +174,6 @@
     <parent link="base_link"/>
     <child link="back_caster_link" />
   </joint>
-
-<!--link name="front_caster_link">
-<visual>
-      <origin xyz="${caster_wheel_offset} 0 -${base_thickness/2+caster_wheel_radius}" rpy="0 0 0"/>
-      <geometry>
-	<sphere radius="${caster_wheel_radius}"/>
-      </geometry>
-      <material name="black"/>
-    </visual>
-    <collision>
-      <origin xyz="${caster_wheel_offset} 0 -${base_thickness/2+caster_wheel_radius}" rpy="0 0 0"/>
-      <geometry>
-        <sphere radius="${caster_wheel_radius}"/>
-      </geometry>
-    </collision>
-</link>
-
-  <joint name="front_caster_link_joint" type="fixed">
-    <origin xyz="0 0 0" rpy="0 0 0" />
-    <parent link="base_link"/>
-    <child link="front_caster_link" />
-  </joint-->
 
   <!--Wheel link & joint macro-->
   <xacro:macro name="wheel" params="prefix reflect">
@@ -140,7 +201,7 @@
       <axis xyz="0 1 0" rpy="0 0 0" />
       <parent link="base_link"/>
       <child link="${prefix}_wheel"/>
-      <origin xyz="${wheel_joint_offset} ${((base_width/2)+base_wheel_gap)*reflect} 0" rpy="0 0 0"/>
+      <origin xyz="${wheel_joint_offset} ${((base_width/2)+base_wheel_gap+wheel_thickness/2)*reflect} 0" rpy="0 0 0"/>
 <limit effort="100" velocity="100"/>
       <joint_properties damping="0.0" friction="0.0"/>
     </joint>
@@ -149,6 +210,34 @@
   <!--Create Left & Right Wheel links/joints-->
   <xacro:wheel prefix="left" reflect="1"/>
   <xacro:wheel prefix="right" reflect="-1"/>
+
+  <!--Motor link & joint macro-->
+  <xacro:macro name="motor" params="prefix reflect">
+    <link name="${prefix}_motor">
+      <visual>
+        <geometry>
+          <cylinder radius="${wheel_radius-base_zoffset-base_thickness/2}" length="${base_width/2-base_wheel_gap}"/>
+        </geometry>
+        <material name="grey"/>
+      </visual>
+      <collision>
+        <geometry>
+          <cylinder radius="${wheel_radius-base_zoffset-base_thickness/2}" length="${wheel_thickness}"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="${prefix}_motor_joint" type="fixed">
+      <origin xyz="0 ${((base_width/2-0.005)/2+base_wheel_gap)*reflect} 0" rpy="${pi/2} 0 0"/>
+      <parent link="${prefix}_wheel"/>
+      <child link="${prefix}_motor"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </joint>
+  </xacro:macro>
+
+  <!--Create Left & Right Wheel links/joints-->
+  <xacro:motor prefix="left" reflect="-1"/>
+  <xacro:motor prefix="right" reflect="1"/>
 
 
   <!--Create Left & Right Wheel links/joints-->

@@ -6,20 +6,29 @@ import queue, collections
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import Odometry
+from tf.transformations import euler_from_quaternion, quaternion_multiply
 
-linspeed = 0.1
-angspeed = np.pi/1
+vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
+VMIN = 0.1
+VMAX = 0.6
+LINACCEL = 0.1
+WMIN = np.pi/8
+WMAX = np.pi/2
+WACCEL = np.pi/2
+
+RATE = 50
 LEN = 0.18
-vel_pub = rospy.Publisher('/kbot/base_controller/cmd_vel', Twist, queue_size=10)
-kp = -6
-kd = 0
+KP = -10
+KD = -0
 fwd_angle = 60
 
-rangeshist = [collections.deque(maxlen=10), collections.deque(maxlen=10), collections.deque(maxlen=1)]
+rangeshist = [collections.deque(maxlen=5), collections.deque(maxlen=5), collections.deque(maxlen=5)]
 robustranges = [0,0,0]
 ranges = []
-walls = []
+walls = [False, False, False]
 pose = []
+wallstonowalls = []
+nowallstowalls = []
 
 DIRS = {'N':0,'W':1,'S':2,'E':3, 0:'N', 1:'W', 2:'S', 3:'E'} # bijective mapping to keep it easier to do modular math
 ACTIONS = ['L','F','R','S','FRF']
@@ -444,8 +453,7 @@ def odom_callback(msg):
 
 
 def scan_callback(msg):
-    # TODO this is a hack, use proper indexing
-    global rangeshist, ranges, walls
+    global rangeshist, ranges, walls, wallstonowalls, nowallstowalls
 
     rangeshist[0].append(msg.ranges[0])
     rangeshist[1].append(msg.ranges[1])
@@ -453,10 +461,20 @@ def scan_callback(msg):
 
     for i in range(3):
     	if not is_outlier(rangeshist[i],msg.ranges[i]):
-		#robustranges[i] = msg.ranges[i]
-		robustranges[i] = np.median(rangeshist[i])
+		robustranges[i] = msg.ranges[i]
+		#robustranges[i] = np.median(rangeshist[i])
     ranges = [msg.ranges[0],msg.ranges[1], msg.ranges[2]]
+
+    prevwalls = walls
     walls = [ ranges[0]*np.sin(np.deg2rad(fwd_angle)) < LEN, ranges[1]<LEN, ranges[2]*np.sin(np.deg2rad(fwd_angle)) < LEN ]
+    wallstonowalls = [False, False, False]
+    nowallstowalls = [False, False, False]
+
+    for i in range(3):
+        if not prevwalls[i] and walls[i]:
+	    nowallstowalls[i] = True
+	elif prevwalls[i] and not walls[i]:
+	    wallstonowalls[i] = True
 
 
 def turn(action,num_steps=1):
@@ -467,12 +485,28 @@ def turn(action,num_steps=1):
 	else:
 		sign = -1
 	vel_msg.linear.x = 0
-	vel_msg.angular.z = sign*angspeed
-	r = rospy.Rate(10) # 10hz
+	vel_msg.angular.z = sign*WMIN
+	r = rospy.Rate(RATE) # hz
 
-	for i in range( int(num_steps*(np.pi/2)/angspeed*10) ):
-		#Publish the velocity
+	prev_inv_orientation = [pose.orientation.x, pose.orientation.y, pose.orientation.z, -pose.orientation.w]
+	angle = 0
+	while angle < num_steps*np.pi/2:
+
+		quat = quaternion_multiply([pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w],prev_inv_orientation)
+		angle += abs(euler_from_quaternion(quat)[2])
+		prev_inv_orientation = [pose.orientation.x, pose.orientation.y, pose.orientation.z, -pose.orientation.w]
+
+		asign = 0.0
+		if angle > num_steps/2.0*np.pi/2:
+			asign = -1.0
+		elif angle < num_steps/2.0*np.pi/2:
+			asign = 1.0
+		else:
+			asign = 0.0
+		if abs(vel_msg.angular.z)+asign*WACCEL/RATE >= WMIN and abs(vel_msg.angular.z)+asign*WACCEL/RATE <= WMAX: 
+			vel_msg.angular.z += sign*(asign*WACCEL)/RATE
 		vel_pub.publish(vel_msg)
+		# TODO fix the deceleration start time
 		r.sleep()
 
 
@@ -490,28 +524,26 @@ def smoothturn(action,num_steps = 1):
 	else:
 		sign = -1
 
-	radius = 0.05	# radius of the turn
-	t = 0.5		# how much time to complete the turn
+	radius = 0.045	# radius of the turn
+	t = 0.25		# how much time to complete the turn
 
 	forward( (LEN-0.05)/LEN, False)
-	r = rospy.Rate(10)
-	for i in range( int(10*t) ):
+	r = rospy.Rate(RATE)
+	for i in range( int(RATE*t) ):
 		vel_msg.linear.x = (np.pi/2*radius)/t
 		vel_msg.angular.z = sign*(np.pi/2)/t
 		vel_pub.publish(vel_msg)
 		r.sleep()	
 
-	forward( (LEN-0.05)/LEN, True)
+	forward( (LEN-0.05)/LEN + num_steps-1, True)
 
-	if num_steps > 1:
-		forward(num_steps-1)
 
 
 def forward(num_steps=1, fwd_corr = True):
 	vel_msg = Twist()
-	vel_msg.linear.x = linspeed*min(max(num_steps,1),2.5)
+	vel_msg.linear.x = VMIN
 
-	r = rospy.Rate(20) # hz
+	r = rospy.Rate(RATE) # hz
 	dist = 0
 	prev_err = 0
 	prev_pos = pose.position
@@ -520,19 +552,38 @@ def forward(num_steps=1, fwd_corr = True):
 	fwall_hist = []
 	rwall_hist = []
 
-	while (robustranges[1] > LEN/2-0.04 and dist < num_steps*LEN) or (dist < LEN/4):
+	while (robustranges[1] > LEN/2-0.07 and dist < num_steps*LEN) or (dist < LEN/4):
 
 		# keep track of the distance traveled
 		dist += np.sqrt((prev_pos.x - pose.position.x)*(prev_pos.x - pose.position.x) + (prev_pos.y - pose.position.y)*(prev_pos.y - pose.position.y))
 		prev_pos = pose.position
+		# correct distance
+		if (wallstonowalls[0] or wallstonowalls[2]) and abs(round(dist/LEN)*LEN-dist) < 2*LEN/10:
+			print(dist)
+			print( LEN/2 - robustranges[0]*np.cos(np.deg2rad(fwd_angle)) - 0.07 )
+			dist = round(dist/LEN)*LEN
+			print(dist)
+
+		# decelerate when distance required to decelerate is more than dist left to travel
+		# else accelerate as long as current speed is less than max
+		asign = 0.0
+		if (VMIN*VMIN-vel_msg.linear.x*vel_msg.linear.x)/2.0/(-LINACCEL) > num_steps*LEN-dist:
+			asign = -1.0
+		elif vel_msg.linear.x < VMAX:
+			asign = +1.0
+		else:
+			asign = 0.0
+		vel_msg.linear.x += (asign*LINACCEL)/RATE
+		#print('\t\t',dist/(num_steps*LEN)*100,vel_msg.linear.x)
 
 		# most reliable wall information is between x% to y% distance traveled
 		# this only works for the last step!
-		if dist > (2*LEN/10 + (num_steps-1)*LEN) and dist < (4*LEN/10 + (num_steps-1)*LEN):
+		if dist > (1*LEN/10 + (num_steps-1)*LEN) and dist < (4*LEN/10 + (num_steps-1)*LEN):
 			rwall_hist.append(walls[0])
 			fwall_hist.append(walls[1])
 			lwall_hist.append(walls[2])
 
+		# lateral correction
 		err = []
 		if walls[0]:	# if right wall exists
 			err.append(ranges[0] - (LEN/2)/np.sin(np.deg2rad(fwd_angle)))
@@ -542,9 +593,12 @@ def forward(num_steps=1, fwd_corr = True):
 			err = np.mean(err)
 		else:
 			err = 0
-		vel_msg.angular.z = err*kp + (err-prev_err)*kd
+
+		vel_msg.angular.z = err*KP + (err-prev_err)*KD
 		prev_err = err
 		vel_pub.publish(vel_msg)
+		
+		
 		r.sleep()
 
 	rwall= rwall_hist.count(True)>rwall_hist.count(False)
@@ -552,16 +606,13 @@ def forward(num_steps=1, fwd_corr = True):
 	lwall = lwall_hist.count(True)>lwall_hist.count(False)
 	
 	# forward correction only when there is a front wall
-	if fwall and fwd_corr:
-		r = rospy.Rate(20) # hz
-		timeout = 20*5
-		k_angcorr = 2
+	if fwall and (rwall or lwall) and fwd_corr:
+		r = rospy.Rate(RATE) # hz
+		timeout = RATE*1
+		k_angcorr = 5
 		k_lincorr = 2
-		while (np.abs(ranges[0]-ranges[2]) > 0.002 or ranges[1] - np.abs((LEN/2 - 0.04)) > 0.002) and timeout > 0:
-			print(ranges[0],ranges[2])
-			print(ranges[1],(LEN/2 - 0.05))
-			print()
-			vel_msg.linear.x =  (ranges[1] - (LEN/2 - 0.04))*k_lincorr
+		while (np.abs(ranges[0]-ranges[2]) > 0.001 or np.abs(ranges[1] - (LEN/2 - 0.08)) > 0.001) and timeout > 0:
+			vel_msg.linear.x =  (ranges[1] - (LEN/2 - 0.07))*k_lincorr
 			vel_msg.angular.z = (ranges[0]-ranges[2])*k_angcorr
 			vel_pub.publish(vel_msg)
 			timeout -= 1
@@ -609,6 +660,7 @@ def goto(goal_row,goal_col):
 			maze.update_cell(r,f,l)
 			actionlist,vertexlist = maze.get_path(goal_row,goal_col,None)
 			actionlist,vertexlist,numlist = get_optimized_path(actionlist,vertexlist,maze)
+			print(r,f,l)
 			
 		#maze.print_maze()
 	maze.draw_maze()
@@ -618,42 +670,33 @@ def test():
 
 	# Starts a new node
 	rospy.init_node('vayu', anonymous=False)
-	rospy.Subscriber('/kbot/laser_scan/scan', LaserScan, scan_callback, queue_size=1)
-	rospy.Subscriber('/kbot/base_controller/odom', Odometry, odom_callback, queue_size=1)
+	rospy.Subscriber('scan', LaserScan, scan_callback, queue_size=1)
+	rospy.Subscriber('odom', Odometry, odom_callback, queue_size=1)
 	# wait until you get first scan
-	r = rospy.Rate(10)
+	r = rospy.Rate(RATE)
 	while len(ranges) < 3:
 		print("Waiting for scan")
 		print(ranges)
 		r.sleep()
 
-	maze = Maze(5,0,0)
-	maze.update_cell(False,True,True,0,0,'N')
-	maze.update_cell(True,False,True,0,1,'E')
-	maze.update_cell(True,False,True,0,2,'E')
-	maze.update_cell(True,False,True,0,3,'E')
-	maze.update_cell(True,True,False,0,4,'E')
-	maze.update_cell(True,False,False,1,4,'N')
-	maze.update_cell(False,True,True,1,3,'W')
-	
-	actionlist,vertexlist = maze.get_path(0,0,'W',1,3,'E')
-	print(actionlist)
-	print(vertexlist)
-	actionlist,vertexlist,numlist = get_optimized_path(actionlist,vertexlist,maze)
-	print(actionlist)
-	print(numlist)
-	print(vertexlist)
-	
+	execute_action('F',15)
+	execute_action('R',1)
+	execute_action('F',15)
+	execute_action('R',2)
+	execute_action('F',15)
+	execute_action('L',1)
+	execute_action('F',15)
+	execute_action('L',2)
 
 def init():
     global ranges, maze
 
     # Starts a new node
     rospy.init_node('vayu', anonymous=False)
-    rospy.Subscriber('/kbot/laser_scan/scan', LaserScan, scan_callback, queue_size=1)
-    rospy.Subscriber('/kbot/base_controller/odom', Odometry, odom_callback, queue_size=1)
+    rospy.Subscriber('/scan', LaserScan, scan_callback, queue_size=1)
+    rospy.Subscriber('/odom', Odometry, odom_callback, queue_size=1)
     # wait until you get first scan
-    r = rospy.Rate(10)
+    r = rospy.Rate(RATE)
     while len(ranges) < 3:
         print("Waiting for scan")
 	print(ranges)

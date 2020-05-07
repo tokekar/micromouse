@@ -1,10 +1,26 @@
-<sdf version="1.4">
+<sdf version="1.6">
   <world name="default">
+
+    <gui>
+        <!--camera name="gzclient_camera">
+            <pose>1.44 1.44 5.86 0 1.57 0</pose>
+        </camera-->
+	<camera name="user_camera">
+        <track_visual>
+          <name>vayu</name>
+          <static>true</static>
+          <use_model_frame>true</use_model_frame>
+          <xyz>0 0 1.5</xyz>
+          <inherit_yaw>false</inherit_yaw>
+        </track_visual>
+	</camera>
+    </gui>
 
     <scene>
       <ambient>0.4 0.4 0.4 1</ambient>
       <background>1 1 1 1</background>
       <shadows>false</shadows>
+	<grid>0</grid>
     </scene>
 
     <!-- A global light source -->
