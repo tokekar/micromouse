@@ -1,26 +1,33 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 import rospy
 import numpy as np
 import matplotlib.pyplot as plt
 import queue, collections
+import os
+from termcolor import colored
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import Odometry
 from tf.transformations import euler_from_quaternion, quaternion_multiply
 
-vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
+vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
 VMIN = 0.1
-VMAX = 0.6
 LINACCEL = 0.1
-WMIN = np.pi/8
+WMIN = np.pi/4
 WMAX = np.pi/2
-WACCEL = np.pi/2
+WACCEL = np.pi/4
 
-RATE = 50
-LEN = 0.18
-KP = -10
-KD = -0
+RATE = 100
+KP = -20.0
+KD = 10
 fwd_angle = 60
+
+LEN = 0.18
+FWD_REF_DIST = LEN/2-0.055		#distance of front wall from laser when mouse is centered in the cell
+MAX_SIDE_WALL_DIST = 0.8*LEN		#worst case scenario where you can still detect side wall, second number is the mouse width
+MOTOR_OFFSET = 0.01			#offset between mouse center and axel center
+MAX_FRONT_WALL_DIST = 1.2*LEN
 
 rangeshist = [collections.deque(maxlen=5), collections.deque(maxlen=5), collections.deque(maxlen=5)]
 robustranges = [0,0,0]
@@ -31,7 +38,6 @@ wallstonowalls = []
 nowallstowalls = []
 
 DIRS = {'N':0,'W':1,'S':2,'E':3, 0:'N', 1:'W', 2:'S', 3:'E'} # bijective mapping to keep it easier to do modular math
-ACTIONS = ['L','F','R','S','FRF']
 COSTS = {'F': 1, 'L': 1, 'R': 1}
 
 # Maze
@@ -257,6 +263,47 @@ class Maze():
 			for c in range(self.dim):
 				self.cells[r][c].print_cell()
 
+	def prettyprint_maze(self):
+		os.system('clear')
+		# print line by line
+		# starting with the northmost wall
+		fgcolor = 'red'
+		bgcolor = 'on_white'
+		attrs = ['bold']
+		r = self.dim-1
+		lines = colored('o',fgcolor,bgcolor,attrs)
+		for c in range(self.dim):
+			if self.cells[r][c].north:
+				lines += colored('---o',fgcolor,bgcolor,attrs)
+			else:
+				lines += colored('   o',fgcolor,bgcolor,attrs)
+		print(lines)
+
+		for r in reversed(range(self.dim)):
+			if self.cells[r][0].west:
+				lines = colored('|',fgcolor,bgcolor,attrs)
+			else:
+				lines = colored(' ',fgcolor,bgcolor,attrs)
+
+			# print color cell with special characters
+			for c in range(self.dim):
+				if r == self.curr_row and c == self.curr_col:
+					cellstr = ' * '
+				else:
+					cellstr = '   '
+				if self.cells[r][c].east:
+					lines += colored(cellstr+'|',fgcolor,bgcolor,attrs)
+				else:
+					lines += colored(cellstr+' ',fgcolor,bgcolor,attrs)
+			print(lines)
+			lines = colored('o',fgcolor,bgcolor,attrs)
+			for c in range(self.dim):
+				if self.cells[r][c].south:
+					lines += colored('---o',fgcolor,bgcolor,attrs)
+				else:
+					lines += colored('   o',fgcolor,bgcolor,attrs)
+			print(lines)
+
 	def draw_maze(self):
 		plt.cla()
 		for r in range(self.dim):
@@ -454,19 +501,18 @@ def odom_callback(msg):
 
 def scan_callback(msg):
     global rangeshist, ranges, walls, wallstonowalls, nowallstowalls
-
     rangeshist[0].append(msg.ranges[0])
     rangeshist[1].append(msg.ranges[1])
     rangeshist[2].append(msg.ranges[2])
 
     for i in range(3):
-    	if not is_outlier(rangeshist[i],msg.ranges[i]):
-		robustranges[i] = msg.ranges[i]
-		#robustranges[i] = np.median(rangeshist[i])
+    	#if not is_outlier(rangeshist[i],msg.ranges[i]):
+		#robustranges[i] = msg.ranges[i]
+	robustranges[i] = np.median(rangeshist[i])
     ranges = [msg.ranges[0],msg.ranges[1], msg.ranges[2]]
 
     prevwalls = walls
-    walls = [ ranges[0]*np.sin(np.deg2rad(fwd_angle)) < LEN, ranges[1]<LEN, ranges[2]*np.sin(np.deg2rad(fwd_angle)) < LEN ]
+    walls = [ ranges[0]*np.sin(np.deg2rad(fwd_angle)) < MAX_SIDE_WALL_DIST, ranges[1] < MAX_FRONT_WALL_DIST, ranges[2]*np.sin(np.deg2rad(fwd_angle)) < MAX_SIDE_WALL_DIST ]
     wallstonowalls = [False, False, False]
     nowallstowalls = [False, False, False]
 
@@ -514,9 +560,8 @@ def stop():
 	vel_pub.publish(Twist())
 
 
-def smoothturn(action,num_steps = 1):
-	# this is always a half a cell forward, then turn, then half a cell forward again
-	# this replaces a FRF or FLF combo
+def smoothturn(action,rwall=None,fwall=None,lwall=None):
+	# this replaces a 1/2F R 1/2F or 1/2F L 1/2F combo
 	
 	vel_msg = Twist()
 	if action=='L':
@@ -524,19 +569,29 @@ def smoothturn(action,num_steps = 1):
 	else:
 		sign = -1
 
-	radius = 0.045	# radius of the turn
-	t = 0.25		# how much time to complete the turn
+	radius = 0.05				# radius of the turn
+	t = (np.pi*radius/2.0)/VMIN		# how much time to complete the turn
 
-	forward( (LEN-0.05)/LEN, False)
+	straight_for_smoothturn( (LEN/2-radius+MOTOR_OFFSET), +1, rwall, fwall, lwall)
 	r = rospy.Rate(RATE)
-	for i in range( int(RATE*t) ):
-		vel_msg.linear.x = (np.pi/2*radius)/t
+	prev_inv_orientation = [pose.orientation.x, pose.orientation.y, pose.orientation.z, -pose.orientation.w]
+	angle = 0
+	while angle < np.pi/2-np.pi/24:
+		quat = quaternion_multiply([pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w],prev_inv_orientation)
+		angle += abs(euler_from_quaternion(quat)[2])
+		prev_inv_orientation = [pose.orientation.x, pose.orientation.y, pose.orientation.z, -pose.orientation.w]
+
+		vel_msg.linear.x = VMIN
 		vel_msg.angular.z = sign*(np.pi/2)/t
 		vel_pub.publish(vel_msg)
 		r.sleep()	
 
-	forward( (LEN-0.05)/LEN + num_steps-1, True)
+	rwall, fwall, lwall = straight_for_smoothturn( (LEN/2-radius), +1)
+	return rwall, fwall, lwall
 
+
+def get_withincell_dist(dist):
+	return (dist - np.floor(dist/LEN)*LEN)
 
 
 def forward(num_steps=1, fwd_corr = True):
@@ -545,24 +600,39 @@ def forward(num_steps=1, fwd_corr = True):
 
 	r = rospy.Rate(RATE) # hz
 	dist = 0
-	prev_err = 0
+	prev_err = 0.0
 	prev_pos = pose.position
 
 	lwall_hist = []
 	fwall_hist = []
 	rwall_hist = []
 
-	while (robustranges[1] > LEN/2-0.07 and dist < num_steps*LEN) or (dist < LEN/4):
+	while (robustranges[1] >= FWD_REF_DIST and dist <= num_steps*LEN) or dist <= LEN/4:
 
 		# keep track of the distance traveled
 		dist += np.sqrt((prev_pos.x - pose.position.x)*(prev_pos.x - pose.position.x) + (prev_pos.y - pose.position.y)*(prev_pos.y - pose.position.y))
 		prev_pos = pose.position
-		# correct distance
-		if (wallstonowalls[0] or wallstonowalls[2]) and abs(round(dist/LEN)*LEN-dist) < 2*LEN/10:
-			print(dist)
-			print( LEN/2 - robustranges[0]*np.cos(np.deg2rad(fwd_angle)) - 0.07 )
+
+		# set flags based on distance
+		celldist = get_withincell_dist(dist)
+		#print '{0:.3f}'.format(celldist)
+
+		# correct distance when you expect to be close to a wall
+		# if we round down, then get rid of the wall history, since we are starting afresh
+		# if we round up, then adjust the distances stored 
+		if (wallstonowalls[0] or wallstonowalls[2]) and (celldist < 2*LEN/10 or celldist > 8*LEN/10):
+			if celldist < 2*LEN/10:
+				print("Forward correction. Rounding down.")
+				lwall_hist = []
+				fwall_hist = []
+				rwall_hist = []
+			else:
+				print("Forward correction. Rounding up.")
+				print("WARN: need to implement distance wall history")
+			print "Distance before: {0:0.2f}".format(dist)			
 			dist = round(dist/LEN)*LEN
-			print(dist)
+			print "Distance after: {0:0.2f}".format(dist)
+			
 
 		# decelerate when distance required to decelerate is more than dist left to travel
 		# else accelerate as long as current speed is less than max
@@ -574,7 +644,6 @@ def forward(num_steps=1, fwd_corr = True):
 		else:
 			asign = 0.0
 		vel_msg.linear.x += (asign*LINACCEL)/RATE
-		#print('\t\t',dist/(num_steps*LEN)*100,vel_msg.linear.x)
 
 		# most reliable wall information is between x% to y% distance traveled
 		# this only works for the last step!
@@ -584,16 +653,16 @@ def forward(num_steps=1, fwd_corr = True):
 			lwall_hist.append(walls[2])
 
 		# lateral correction
-		err = []
-		if walls[0]:	# if right wall exists
-			err.append(ranges[0] - (LEN/2)/np.sin(np.deg2rad(fwd_angle)))
-		if walls[2]:	# if left wall exists
-			err.append((LEN/2)/np.sin(np.deg2rad(fwd_angle)) - ranges[2])
-		if len(err) > 0:
-			err = np.mean(err)
-		else:
-			err = 0
-
+		err = 0
+		if walls[0] and walls[1]:
+			err = ranges[0]*np.sin(np.deg2rad(fwd_angle)) - ranges[2]*np.sin(np.deg2rad(fwd_angle))
+		elif walls[0]:	# if right wall exists
+			err = ranges[0]*np.sin(np.deg2rad(fwd_angle)) - (LEN/2)
+		elif walls[2]:	# if left wall exists
+			err = (LEN/2) - ranges[2]*np.sin(np.deg2rad(fwd_angle))
+		
+		print "Error: {0:.3f}".format(err)
+		print "Angular velocity: {0:.2f}".format(vel_msg.angular.z)
 		vel_msg.angular.z = err*KP + (err-prev_err)*KD
 		prev_err = err
 		vel_pub.publish(vel_msg)
@@ -606,13 +675,13 @@ def forward(num_steps=1, fwd_corr = True):
 	lwall = lwall_hist.count(True)>lwall_hist.count(False)
 	
 	# forward correction only when there is a front wall
-	if fwall and (rwall or lwall) and fwd_corr:
+	if fwall and fwd_corr:
 		r = rospy.Rate(RATE) # hz
 		timeout = RATE*1
 		k_angcorr = 5
 		k_lincorr = 2
-		while (np.abs(ranges[0]-ranges[2]) > 0.001 or np.abs(ranges[1] - (LEN/2 - 0.08)) > 0.001) and timeout > 0:
-			vel_msg.linear.x =  (ranges[1] - (LEN/2 - 0.07))*k_lincorr
+		while (np.abs(ranges[0]-ranges[2]) > 0.001 or np.abs(ranges[1] - FWD_REF_DIST) > 0.001) and timeout > 0:
+			vel_msg.linear.x =  (ranges[1] - FWD_REF_DIST)*k_lincorr
 			vel_msg.angular.z = (ranges[0]-ranges[2])*k_angcorr
 			vel_pub.publish(vel_msg)
 			timeout -= 1
@@ -621,25 +690,176 @@ def forward(num_steps=1, fwd_corr = True):
 	return rwall, fwall, lwall
 
 
-def execute_action(action,num_steps):
+def halfforward(rwall=None,fwall=None,lwall=None):
+	vel_msg = Twist()
+	vel_msg.linear.x = VMIN
+
+	r = rospy.Rate(RATE) # hz
+	dist = 0.0
+	prev_err = 0.0
+	prev_pos = pose.position
+
+	lwall_hist = []
+	fwall_hist = []
+	rwall_hist = []
+
+	rwall_new = None
+	fwall_new = None
+	lwall_new = None
+
+	while (robustranges[1] > FWD_REF_DIST and dist < LEN/2) or dist <= LEN/8:
+
+		# keep track of the distance traveled
+		dist += np.sqrt((prev_pos.x - pose.position.x)*(prev_pos.x - pose.position.x) + (prev_pos.y - pose.position.y)*(prev_pos.y - pose.position.y))
+		prev_pos = pose.position
+
+		# check for a wall to no wall transition
+		# if you do, round off the distance traveled
+		if (rwall == True and walls[0] == False) or (lwall == True and walls[2] == False):
+			#print "Wall to no wall transition"
+			#print "Before: {0:.2f}".format(dist)
+			dist = round(dist/(LEN/2))*LEN/2
+			#print "After: {0:.2f}".format(dist)
+			break
+
+		# check for no wall to wall transition
+		# if you do, we will set the wall flag and wait for wall to no wall transition
+		'''if (rwall == False and ranges[0]*np.sin(np.deg2rad(fwd_angle)) < LEN/2):
+			#print "No wall to wall transition"
+			rwall = True
+			break
+		if (lwall == False and ranges[2]*np.sin(np.deg2rad(fwd_angle)) < LEN/2):
+			#print "No wall to wall transition"
+			lwall = True
+			break'''
+		
+		# record wall history	
+		rwall_hist.append(walls[0])
+		fwall_hist.append(walls[1])
+		lwall_hist.append(walls[2])
+
+		# check if we've found a wall
+		if rwall == None and rwall_new == None and dist > 0.02 and len(rwall_hist) > 10 and (float(rwall_hist.count(True)+1.0)/float(rwall_hist.count(False)+1.0) > 2 or float(rwall_hist.count(False)+1.0)/float(rwall_hist.count(True)+1.0) > 2):
+			#print("Setting wall")
+			rwall_new = rwall_hist.count(True) > rwall_hist.count(False)
+		if lwall == None and lwall_new == None and dist > 0.02 and len(lwall_hist) > 10 and (float(lwall_hist.count(True)+1.0)/float(lwall_hist.count(False)+1.0) > 2 or float(lwall_hist.count(False)+1.0)/float(lwall_hist.count(True)+1.0) > 2):
+			#print("Setting wall")
+			lwall_new = lwall_hist.count(True) > lwall_hist.count(False)
+		if fwall == None and fwall_new == None and dist > 0.02 and len(fwall_hist) > 10 and (float(fwall_hist.count(True)+1.0)/float(fwall_hist.count(False)+1.0) > 2 or float(fwall_hist.count(False)+1.0)/float(fwall_hist.count(True)+1.0) > 2):
+			#print("Setting wall")
+			fwall_new = fwall_hist.count(True) > fwall_hist.count(False)
+
+		# lateral correction
+		err = 0
+		rcorr = (rwall == True or rwall_new == True) and (ranges[0]*np.sin(np.deg2rad(fwd_angle)) < MAX_SIDE_WALL_DIST)
+		lcorr = (lwall == True or lwall_new == True) and (ranges[2]*np.sin(np.deg2rad(fwd_angle)) < MAX_SIDE_WALL_DIST)
+		if lcorr and rcorr:
+			err = (ranges[0]*np.sin(np.deg2rad(fwd_angle)) - ranges[2]*np.sin(np.deg2rad(fwd_angle)))/2
+		elif rcorr:	# if right wall exists
+			err = ranges[0]*np.sin(np.deg2rad(fwd_angle)) - (LEN/2)
+		elif lcorr:	# if left wall exists
+			err = (LEN/2) - ranges[2]*np.sin(np.deg2rad(fwd_angle))
+		
+		#print "Error: {0:.3f}".format(err)
+		#print "Angular velocity: {0:.2f}".format(vel_msg.angular.z)
+		#print ranges
+		vel_msg.angular.z = err*KP + (err-prev_err)*KD
+		prev_err = err
+		vel_pub.publish(vel_msg)
+		
+		r.sleep()
+
+	rwall= rwall_hist.count(True)>rwall_hist.count(False)
+	fwall = fwall_hist.count(True)>fwall_hist.count(False)
+	lwall = lwall_hist.count(True)>lwall_hist.count(False)
+	
+	return rwall, fwall, lwall
+
+
+def straight_for_smoothturn(targetdist,dir,rwall=None,fwall=None,lwall=None):
+
+	vel_msg = Twist()
+	vel_msg.linear.x = dir*VMIN
+
+	r = rospy.Rate(RATE) # hz
+	dist = 0
+	prev_pos = pose.position
+	prev_err = 0
+
+	lwall_hist = []
+	fwall_hist = []
+	rwall_hist = []
+
+	rwall_new = None
+	fwall_new = None
+	lwall_new = None
+
+	while (dist <= targetdist and robustranges[1] >= FWD_REF_DIST+targetdist):
+		# keep track of the distance traveled
+		dist += np.sqrt((prev_pos.x - pose.position.x)*(prev_pos.x - pose.position.x) + (prev_pos.y - pose.position.y)*(prev_pos.y - pose.position.y))
+		prev_pos = pose.position
+
+		# record wall history
+		rwall_hist.append(walls[0])
+		fwall_hist.append(walls[1])
+		lwall_hist.append(walls[2])
+
+		# check if we've found a wall
+		if rwall == None and rwall_new == None and dist > 0.02 and len(rwall_hist) > 10 and (float(rwall_hist.count(True)+1.0)/float(rwall_hist.count(False)+1.0) > 2 or float(rwall_hist.count(False)+1.0)/float(rwall_hist.count(True)+1.0) > 2):
+			#print("Setting wall")
+			rwall_new = rwall_hist.count(True) > rwall_hist.count(False)
+		if lwall == None and lwall_new == None and dist > 0.02 and len(lwall_hist) > 10 and (float(lwall_hist.count(True)+1.0)/float(lwall_hist.count(False)+1.0) > 2 or float(lwall_hist.count(False)+1.0)/float(lwall_hist.count(True)+1.0) > 2):
+			#print("Setting wall")
+			lwall_new = lwall_hist.count(True) > lwall_hist.count(False)
+		if fwall == None and fwall_new == None and dist > 0.02 and len(fwall_hist) > 10 and (float(fwall_hist.count(True)+1.0)/float(fwall_hist.count(False)+1.0) > 2 or float(fwall_hist.count(False)+1.0)/float(fwall_hist.count(True)+1.0) > 2):
+			#print("Setting wall")
+			fwall_new = fwall_hist.count(True) > fwall_hist.count(False)
+
+		# lateral correction
+		err = 0
+		rcorr = (rwall == True or rwall_new == True) and (ranges[0]*np.sin(np.deg2rad(fwd_angle)) < MAX_SIDE_WALL_DIST)
+		lcorr = (lwall == True or lwall_new == True) and (ranges[2]*np.sin(np.deg2rad(fwd_angle)) < MAX_SIDE_WALL_DIST)
+		if lcorr and rcorr:
+			err = ranges[0]*np.sin(np.deg2rad(fwd_angle)) - ranges[2]*np.sin(np.deg2rad(fwd_angle))
+		elif rcorr:	# if right wall exists
+			err = ranges[0]*np.sin(np.deg2rad(fwd_angle)) - (LEN/2)
+		elif lcorr:	# if left wall exists
+			err = (LEN/2) - ranges[2]*np.sin(np.deg2rad(fwd_angle))
+		
+		#print "Error: {0:.3f}".format(err)
+		#print "Angular velocity: {0:.2f}".format(vel_msg.angular.z)
+		#print ranges
+		vel_msg.angular.z = err*KP + (err-prev_err)*KD
+		prev_err = err
+		vel_pub.publish(vel_msg)
+		r.sleep()
+
+	rwall= rwall_hist.count(True)>rwall_hist.count(False)
+	fwall = fwall_hist.count(True)>fwall_hist.count(False)
+	lwall = lwall_hist.count(True)>lwall_hist.count(False)
+	return rwall,fwall,lwall
+
+
+def execute_action(action,r,f,l):
 	r = None
 	f = None
 	l = None
 
 	if action == 'F':
-		r,f,l = forward(num_steps)
+		halfforward(r,f,l)
 		stop()
-	elif action == 'R' or action == 'L':
-		turn(action,num_steps)
-		stop()
+		r,f,l = halfforward()
+	elif action == 'RF':
+		r,f,l = smoothturn('R',r,f,l)
+	elif action == 'LF':
+		r,f,l = smoothturn('L',r,f,l)	
+	elif action == 'RRF':
+		halfforward(r,f,l)
+		turn('R',2)
+		r,f,l = halfforward()
 	elif action == 'S':
 		stop()
-	elif action == 'FRF':
-		smoothturn('R',num_steps)
-		stop()
-	elif action == 'FLF':
-		smoothturn('L',num_steps)
-		stop()
+	stop()
 	return r,f,l
 
 
@@ -679,14 +899,45 @@ def test():
 		print(ranges)
 		r.sleep()
 
-	execute_action('F',15)
-	execute_action('R',1)
-	execute_action('F',15)
-	execute_action('R',2)
-	execute_action('F',15)
-	execute_action('L',1)
-	execute_action('F',15)
-	execute_action('L',2)
+	maze = Maze(16,0,0)
+	
+	r,f,l = halfforward()	
+	stop()
+	maze.update_pose('F',1)
+	maze.update_cell(r,f,l)
+	maze.prettyprint_maze()
+
+	for i in range(1000):
+		if r == False and f == False:
+			if np.random.random() > 0.2:
+				action = 'F'
+			else:
+				action = 'RF'
+		elif f == False and l == False:
+			if np.random.random() > 0.2:
+				action = 'F'
+			else:
+				action = 'LF'
+		elif r == False and l == False:
+			if np.random.random() > 0.5:
+				action = 'RF'
+			else:
+				action = 'LF'
+		elif r == False:
+			action = 'RF'
+		elif l == False:
+			action = 'LF'
+		elif f == False:
+			action = 'F'
+		else:
+			action = 'RRF'
+		r,f,l = execute_action(action,r,f,l)
+		maze.update_pose(action,1)
+		maze.update_cell(r,f,l)
+		maze.prettyprint_maze()
+	stop()
+	plt.show()
+		
 
 def init():
     global ranges, maze
@@ -714,6 +965,6 @@ def init():
 if __name__ == '__main__':
     try:
         #Testing our function
-	#test()
-        init()
+	test()
+        #init()
     except rospy.ROSInterruptException: pass
