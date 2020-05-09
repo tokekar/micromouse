@@ -8,10 +8,10 @@
   <xacro:property name="base_len" value="${2*wheel_radius}"/>
   <xacro:property name="base_thickness" value="0.005"/>
   <xacro:property name="base_wheel_gap" value="${0.001}"/>
-  <xacro:property name="base_curve_radius" value="0.03"/>
+  <xacro:property name="base_curve_radius" value="0.029"/>
   <xacro:property name="base_zoffset" value="${(wheel_radius-caster_wheel_radius*2-base_thickness/2)}"/>
 
-  <xacro:property name="wheel_radius" value="0.02"/>
+  <xacro:property name="wheel_radius" value="0.025"/>
   <xacro:property name="wheel_separation" value="${(base_width+2*base_wheel_gap+wheel_thickness)}"/>
   <xacro:property name="wheel_thickness" value="0.01"/>
   <xacro:property name="wheel_joint_offset" value="-0.01"/>
@@ -24,7 +24,7 @@
   <xacro:property name="laser_size_x" value="0.005"/>
   <xacro:property name="laser_size_y" value="0.005"/>
   <xacro:property name="laser_size_z" value="0.005"/>
-  <xacro:property name="laser_origin_x" value="${mouse_len+wheel_joint_offset-base_len/2-laser_size_x/2}"/>
+  <xacro:property name="laser_origin_x" value="${mouse_len+wheel_joint_offset-base_len/2-laser_size_x/2-0.015}"/>
   <xacro:property name="laser_origin_y" value="0"/>
   <xacro:property name="laser_origin_z" value="-${base_zoffset-base_thickness/2-laser_size_z/2}"/>
 

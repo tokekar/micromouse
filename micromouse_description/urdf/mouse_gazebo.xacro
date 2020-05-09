@@ -89,11 +89,29 @@
               <minDepth>0</minDepth>
   </gazebo>
 
+  <gazebo reference="led">
+ <material>
+            <ambient>1 0.2 0.2 1</ambient>
+            <diffuse>1 0.2 0.2 1</diffuse>
+            <specular>1 1 1 1</specular>
+            <emissive>1 0.2 0.2 1</emissive>
+          </material>
+        <light name='button' type='point'>
+          <pose>0 0 0.05 0 0 0</pose>
+          <attenuation>
+            <range>0.02</range>
+            <linear>0.10</linear>
+          </attenuation>
+          <diffuse>1 0.2 0.2 1</diffuse>
+          <specular>1 1 1 1</specular>
+        </light>
+  </gazebo>
+
   <gazebo>
     <plugin name="differential_drive_controller" filename="libgazebo_ros_diff_drive.so">
       <alwaysOn>false</alwaysOn>
       <legacyMode>false</legacyMode>
-      <updateRate>100</updateRate>
+      <updateRate>200</updateRate>
       <leftJoint>left_wheel_joint</leftJoint>
       <rightJoint>right_wheel_joint</rightJoint>
       <wheelSeparation>${wheel_separation}</wheelSeparation>
@@ -110,8 +128,8 @@
   <gazebo reference="sensor_laser">
     <sensor type="ray" name="head_hokuyo_sensor">
       <pose>0 0 0 0 0 0</pose>
-      <visualize>false</visualize>
-      <update_rate>100</update_rate>
+      <visualize>true</visualize>
+      <update_rate>200</update_rate>
       <ray>
         <scan>
           <horizontal>
@@ -123,7 +141,7 @@
         </scan>
         <range>
           <min>0.01</min>
-          <max>1</max>
+          <max>0.25</max>
           <resolution>0.005</resolution>
         </range>
         <noise>

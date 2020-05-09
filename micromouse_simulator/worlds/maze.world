@@ -10,7 +10,7 @@
           <name>vayu</name>
           <static>true</static>
           <use_model_frame>true</use_model_frame>
-          <xyz>0 0 1.5</xyz>
+          <xyz>0 0 2</xyz>
           <inherit_yaw>false</inherit_yaw>
         </track_visual>
 	</camera>
@@ -20,7 +20,7 @@
       <ambient>0.4 0.4 0.4 1</ambient>
       <background>1 1 1 1</background>
       <shadows>false</shadows>
-	<grid>0</grid>
+	<grid>1</grid>
     </scene>
 
     <!-- A global light source -->
