@@ -13,6 +13,7 @@ from tf.transformations import euler_from_quaternion, quaternion_multiply
 
 vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
 VMIN = 0.1
+VMAX = 0.1
 LINACCEL = 0.1
 WMIN = np.pi/4
 WMAX = np.pi/2
@@ -24,7 +25,7 @@ KD = 10
 fwd_angle = 60
 
 LEN = 0.18
-FWD_REF_DIST = LEN/2-0.055		#distance of front wall from laser when mouse is centered in the cell
+FWD_REF_DIST = LEN/2-0.065		#distance of front wall from laser when mouse is centered in the cell
 MAX_SIDE_WALL_DIST = 0.8*LEN		#worst case scenario where you can still detect side wall, second number is the mouse width
 MOTOR_OFFSET = 0.01			#offset between mouse center and axel center
 MAX_FRONT_WALL_DIST = 1.2*LEN
@@ -38,7 +39,7 @@ wallstonowalls = []
 nowallstowalls = []
 
 DIRS = {'N':0,'W':1,'S':2,'E':3, 0:'N', 1:'W', 2:'S', 3:'E'} # bijective mapping to keep it easier to do modular math
-COSTS = {'F': 1, 'L': 1, 'R': 1}
+COSTS = {'F': 1, 'L': 0.1, 'R': 0.1}
 
 # Maze
 maze = []
@@ -73,8 +74,7 @@ class GridGraph():
 			visited[curr_state] = True
 			infrontier[curr_state] = False
 
-			if curr_state[0] == goal[0] and curr_state[1] == goal[1]:
-				#print("Found solution:", curr_path)
+			if curr_state == goal:
 				return curr_actionlist, curr_vertexlist
 
 			successors = list(self.graph[curr_state])
@@ -263,11 +263,17 @@ class Maze():
 			for c in range(self.dim):
 				self.cells[r][c].print_cell()
 
-	def prettyprint_maze(self):
+	def prettyprint_maze(self,vertexlist=[]):
+
+		vertexlist = [(v[0],v[1]) for v in vertexlist]
+			
 		os.system('clear')
+		
 		# print line by line
 		# starting with the northmost wall
 		fgcolor = 'red'
+		currcolor = 'red'
+		pathcolor = 'blue'
 		bgcolor = 'on_white'
 		attrs = ['bold']
 		r = self.dim-1
@@ -285,16 +291,24 @@ class Maze():
 			else:
 				lines = colored(' ',fgcolor,bgcolor,attrs)
 
-			# print color cell with special characters
+			# print current cell with special characters
+			# print path with special characters
 			for c in range(self.dim):
+				color = fgcolor
 				if r == self.curr_row and c == self.curr_col:
 					cellstr = ' * '
+					color = currcolor
+				elif (r,c) in vertexlist:
+					cellstr = ' . '
+					color = pathcolor
 				else:
 					cellstr = '   '
 				if self.cells[r][c].east:
-					lines += colored(cellstr+'|',fgcolor,bgcolor,attrs)
+					lines += colored(cellstr,color,bgcolor,attrs)
+					lines += colored('|',fgcolor,bgcolor,attrs)
 				else:
-					lines += colored(cellstr+' ',fgcolor,bgcolor,attrs)
+					lines += colored(cellstr,color,bgcolor,attrs)
+					lines += colored(' ',fgcolor,bgcolor,attrs)
 			print(lines)
 			lines = colored('o',fgcolor,bgcolor,attrs)
 			for c in range(self.dim):
@@ -722,6 +736,10 @@ def halfforward(rwall=None,fwall=None,lwall=None):
 			#print "After: {0:.2f}".format(dist)
 			break
 
+		#print(rwall,lwall)
+		#print(walls[0],walls[2])
+		#print ""
+
 		# check for no wall to wall transition
 		# if you do, we will set the wall flag and wait for wall to no wall transition
 		'''if (rwall == False and ranges[0]*np.sin(np.deg2rad(fwd_angle)) < LEN/2):
@@ -840,10 +858,30 @@ def straight_for_smoothturn(targetdist,dir,rwall=None,fwall=None,lwall=None):
 	return rwall,fwall,lwall
 
 
-def execute_action(action,r,f,l):
-	r = None
-	f = None
-	l = None
+# assumes you are starting in the middle of the cell
+# uses front sensor to sense right, front, and left walls
+# rotates by pi/4 to sense these walls
+# finds an opening in the wall and moves half a cell
+# call this function before starting navigation
+def make_first_move(maze):
+	
+	# find an open wall
+	# move for half a cell
+	action = ''
+	while not walls[1] == False:
+		turn('L',1)
+		stop()
+		action += 'L'
+
+	action += 'F'
+	r,f,l = halfforward()
+	stop()
+	maze.update_pose(action,1)
+	maze.update_cell(r,f,l)
+	return r,f,l
+
+
+def execute_action(action,r=None,f=None,l=None):
 
 	if action == 'F':
 		halfforward(r,f,l)
@@ -857,50 +895,44 @@ def execute_action(action,r,f,l):
 		halfforward(r,f,l)
 		turn('R',2)
 		r,f,l = halfforward()
+	elif action == 'LLF':
+		halfforward(r,f,l)
+		turn('L',2)
+		r,f,l = halfforward()
+	elif action == 'L':
+		halfforward(r,f,l)
+		turn('L')
+		r = None
+		f = None
+		l = None
+	elif action == 'R':
+		halfforward(r,f,l)
+		turn('R')
+		r = None
+		f = None
+		l = None
+	elif action == 'LL':
+		halfforward(r,f,l)
+		turn('L',2)
+		r = None
+		f = None
+		l = None
+	elif action == 'RR':
+		halfforward(r,f,l)
+		turn('R',2)
+		r = None
+		f = None
+		l = None
 	elif action == 'S':
 		stop()
+		r = None
+		f = None
+		l = None
 	stop()
 	return r,f,l
 
 
-def goto(goal_row,goal_col):
-	# Draw maze
-	plt.axis([0, maze.dim+1, 0, maze.dim+1])
-	actionlist,vertexlist = maze.get_path(goal_row,goal_col,None)
-	actionlist,_,numlist = get_optimized_path(actionlist,vertexlist,maze)
-
-	while len(actionlist) > 0:
-		action = actionlist.pop(0)
-		num_steps = numlist.pop(0)
-		r,f,l = execute_action(action,num_steps)
-		maze.update_pose(action,num_steps)
-		print(maze.curr_row, maze.curr_col, maze.curr_dir)
-
-		if action == 'F' and num_steps == 1:
-			maze.update_cell(r,f,l)
-			actionlist,vertexlist = maze.get_path(goal_row,goal_col,None)
-			actionlist,vertexlist,numlist = get_optimized_path(actionlist,vertexlist,maze)
-			print(r,f,l)
-			
-		#maze.print_maze()
-	maze.draw_maze()
-
-
-def test():
-
-	# Starts a new node
-	rospy.init_node('vayu', anonymous=False)
-	rospy.Subscriber('scan', LaserScan, scan_callback, queue_size=1)
-	rospy.Subscriber('odom', Odometry, odom_callback, queue_size=1)
-	# wait until you get first scan
-	r = rospy.Rate(RATE)
-	while len(ranges) < 3:
-		print("Waiting for scan")
-		print(ranges)
-		r.sleep()
-
-	maze = Maze(16,0,0)
-	
+def wallfollow():
 	r,f,l = halfforward()	
 	stop()
 	maze.update_pose('F',1)
@@ -933,11 +965,56 @@ def test():
 			action = 'RRF'
 		r,f,l = execute_action(action,r,f,l)
 		maze.update_pose(action,1)
-		maze.update_cell(r,f,l)
+		if not (r == None or f == None or l == None):
+			maze.update_cell(r,f,l)
 		maze.prettyprint_maze()
+
+
+def goto(goal_row,goal_col):
+
+	'''r,f,l = halfforward()	
 	stop()
-	plt.show()
-		
+	maze.update_pose('F',1)
+	maze.update_cell(r,f,l)'''
+	
+	r,f,l = make_first_move(maze)
+	actionlist,vertexlist = maze.get_path(goal_row,goal_col,None)
+
+	maze.prettyprint_maze(vertexlist)
+	while len(actionlist) > 0:
+		action = actionlist.pop(0)
+		while not action[-1] == 'F' and len(actionlist) > 0:
+			action += actionlist.pop(0)
+		r,f,l = execute_action(action,r,f,l)
+		maze.update_pose(action,1)
+		if not (r == None or f == None or l == None):
+			maze.update_cell(r,f,l)
+		actionlist,vertexlist = maze.get_path(goal_row,goal_col,None)
+		maze.prettyprint_maze(vertexlist)
+	if action[-1] == 'F':
+		halfforward(r,f,l)
+
+def test():
+
+	# Starts a new node
+	rospy.init_node('vayu', anonymous=False)
+	rospy.Subscriber('scan', LaserScan, scan_callback, queue_size=1)
+	rospy.Subscriber('odom', Odometry, odom_callback, queue_size=1)
+	
+	# wait until you get first scan
+	r = rospy.Rate(RATE)
+	while len(ranges) < 3:
+		print("Waiting for scan")
+		print(ranges)
+		r.sleep()
+
+	maze = Maze(16,0,0)
+	goal_row = 8
+	goal_col = 8
+	
+	r,f,l = make_first_move(maze)
+	print(r,f,l)
+			
 
 def init():
     global ranges, maze
@@ -957,14 +1034,21 @@ def init():
 
     #wallfollow()
     goto(8,8)
+    rospy.sleep(2)
     goto(0,0)
+    rospy.sleep(2)
     goto(8,8)
+    rospy.sleep(2)
+    goto(0,0)
+    rospy.sleep(2)
+    goto(8,8)
+    rospy.sleep(2)
     goto(0,0)
 
 
 if __name__ == '__main__':
     try:
         #Testing our function
-	test()
-        #init()
+	#test()
+        init()
     except rospy.ROSInterruptException: pass
