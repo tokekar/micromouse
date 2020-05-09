@@ -495,18 +495,6 @@ def get_optimized_path(actionlist,vertexlist,maze):
 	#return opt_actionlist,opt_vertexlist,opt_numlist
 
 
-
-def is_outlier(data,sample=None):
-    # by default apply only to the last element of the data
-    if sample==None:
-        sample = data[-1]
-    median = np.median(data)
-    mad = np.median(np.abs(data-median))
-    score = 0.6745*(sample-median)/mad
-    return np.abs(score)>3.5
-
-
-
 def odom_callback(msg):
 	global pose
 	pose = msg.pose.pose
@@ -514,27 +502,16 @@ def odom_callback(msg):
 
 
 def scan_callback(msg):
-    global rangeshist, ranges, walls, wallstonowalls, nowallstowalls
+    global rangeshist, ranges, walls
     rangeshist[0].append(msg.ranges[0])
     rangeshist[1].append(msg.ranges[1])
     rangeshist[2].append(msg.ranges[2])
 
     for i in range(3):
-    	#if not is_outlier(rangeshist[i],msg.ranges[i]):
-		#robustranges[i] = msg.ranges[i]
 	robustranges[i] = np.median(rangeshist[i])
     ranges = [msg.ranges[0],msg.ranges[1], msg.ranges[2]]
 
-    prevwalls = walls
     walls = [ ranges[0]*np.sin(np.deg2rad(fwd_angle)) < MAX_SIDE_WALL_DIST, ranges[1] < MAX_FRONT_WALL_DIST, ranges[2]*np.sin(np.deg2rad(fwd_angle)) < MAX_SIDE_WALL_DIST ]
-    wallstonowalls = [False, False, False]
-    nowallstowalls = [False, False, False]
-
-    for i in range(3):
-        if not prevwalls[i] and walls[i]:
-	    nowallstowalls[i] = True
-	elif prevwalls[i] and not walls[i]:
-	    wallstonowalls[i] = True
 
 
 def turn(action,num_steps=1):
@@ -603,9 +580,6 @@ def smoothturn(action,rwall=None,fwall=None,lwall=None):
 	rwall, fwall, lwall = straight_for_smoothturn( (LEN/2-radius), +1)
 	return rwall, fwall, lwall
 
-
-def get_withincell_dist(dist):
-	return (dist - np.floor(dist/LEN)*LEN)
 
 
 def forward(num_steps=1, fwd_corr = True):
@@ -971,12 +945,8 @@ def wallfollow():
 
 
 def goto(goal_row,goal_col):
-
-	'''r,f,l = halfforward()	
-	stop()
-	maze.update_pose('F',1)
-	maze.update_cell(r,f,l)'''
 	
+	starttime = rospy.Time.now()
 	r,f,l = make_first_move(maze)
 	actionlist,vertexlist = maze.get_path(goal_row,goal_col,None)
 
@@ -991,6 +961,7 @@ def goto(goal_row,goal_col):
 			maze.update_cell(r,f,l)
 		actionlist,vertexlist = maze.get_path(goal_row,goal_col,None)
 		maze.prettyprint_maze(vertexlist)
+		print (rospy.Time.now()-starttime).to_sec()
 	if action[-1] == 'F':
 		halfforward(r,f,l)
 
