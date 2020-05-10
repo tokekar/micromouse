@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import queue, collections
 import os
+import pickle
 from termcolor import colored
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import LaserScan
@@ -13,7 +14,9 @@ from tf.transformations import euler_from_quaternion, quaternion_multiply
 
 vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
 VMIN = 0.1
-VMAX = 0.1
+VMAX = 0.6
+VTURN = 0.1
+RADTURN = 0.04
 LINACCEL = 0.1
 WMIN = np.pi/4
 WMAX = np.pi/2
@@ -39,7 +42,7 @@ wallstonowalls = []
 nowallstowalls = []
 
 DIRS = {'N':0,'W':1,'S':2,'E':3, 0:'N', 1:'W', 2:'S', 3:'E'} # bijective mapping to keep it easier to do modular math
-COSTS = {'F': 1, 'L': 0.1, 'R': 0.1}
+COSTS = {'F': 1, 'L': 0.9, 'R': 0.9}
 
 # Maze
 maze = []
@@ -422,6 +425,10 @@ class Maze():
 		self.curr_col = c
 		self.curr_dir = dir
 
+	def dump(self,filename):
+		fileobj = open(filename,'wb+')
+		pickle.dump(self,fileobj)
+
 	def __init__(self, dim, init_row=0, init_col=0, init_dir='N'):
 		self.dim = dim
 		self.cells = [[Cell(r,c) for c in range(dim)] for r in range(dim)]
@@ -431,68 +438,59 @@ class Maze():
 		self.gridgraph = GridGraph(dim)
 
 
-def get_optimized_path(actionlist,vertexlist,maze):
+def get_opt_path(actionlist,vertexlist,maze):
 	num_actions = len(actionlist)
 	if num_actions < 2:
-		return actionlist, vertexlist, [1]*num_actions
+		return actionlist, vertexlist
 
-	opt_actionlist = []
-	opt_vertexlist = []
-	opt_numlist = []
-
+	# merge consecutive LL or RR
+	merged_actionlist = []
+	merged_vertexlist = []
 	for curr_action, curr_vertex in zip(actionlist,vertexlist):
-		# concat only if last and current actions are the same AND last and current cell are visited
-		if len(opt_actionlist) == 0:
-			opt_actionlist.append(curr_action)
-			opt_vertexlist.append(curr_vertex)
-			opt_numlist.append(1)
+		if len(merged_actionlist) == 0:
+			merged_actionlist.append(curr_action)
+			merged_vertexlist.append(curr_vertex)
 		else:
-			if curr_action == opt_actionlist[-1] and maze.is_visited(curr_vertex[0],curr_vertex[1]) and maze.is_visited(opt_vertexlist[-1][0],opt_vertexlist[-1][1]):
-				opt_vertexlist[-1] = curr_vertex
-				opt_numlist[-1] += 1
+			if curr_action == merged_actionlist[-1] and (curr_action == 'L' or curr_action == 'R'):
+				merged_actionlist[-1] += curr_action
 			else:
-				opt_actionlist.append(curr_action)
-				opt_vertexlist.append(curr_vertex)
-				opt_numlist.append(1)
+				merged_actionlist.append(curr_action)
+				merged_vertexlist.append(curr_vertex)
 
-	# now add smooth turns
-	idx = 1
-	smooth_actionlist = []
-	smooth_vertexlist = []
-	smooth_numlist = []
-	while len(opt_actionlist) > 0:
-
-		curr_action = opt_actionlist.pop(0)
-		curr_vertex = opt_vertexlist.pop(0)
-		curr_num = opt_numlist.pop(0)
-
-		#print(curr_action)
-		#print(curr_vertex)
-		#print(curr_num)
-		#print(opt_actionlist)
-		#print()
-
-		if len(opt_actionlist) > 2:
-			if curr_action == 'F' and (opt_actionlist[0] == 'R' or opt_actionlist[0] == 'L') and opt_actionlist[1] == 'F' and curr_num == 1 and maze.is_visited(curr_vertex[0],curr_vertex[1]) and maze.is_visited(opt_vertexlist[1][0],opt_vertexlist[1][1]):
-				smooth_actionlist.append('F'+opt_actionlist[0]+'F')
-				smooth_vertexlist.append(opt_vertexlist[1])
-				smooth_numlist.append(opt_numlist[1])
-				opt_actionlist.pop(0)
-				opt_actionlist.pop(0)
-				opt_vertexlist.pop(0)
-				opt_vertexlist.pop(0)
-				opt_numlist.pop(0)
-				opt_numlist.pop(0)
-			else:
-				smooth_actionlist.append(curr_action)
-				smooth_vertexlist.append(curr_vertex)
-				smooth_numlist.append(curr_num)
+	# append F after L's and R's
+	merged_actionlist2 = []
+	merged_vertexlist2 = []
+	for curr_action, curr_vertex in zip(merged_actionlist,merged_vertexlist):
+		if len(merged_actionlist2) == 0:
+			merged_actionlist2.append(curr_action)
+			merged_vertexlist2.append(curr_vertex)
 		else:
-			smooth_actionlist.append(curr_action)
-			smooth_vertexlist.append(curr_vertex)
-			smooth_numlist.append(curr_num)
-	return smooth_actionlist,smooth_vertexlist,smooth_numlist
-	#return opt_actionlist,opt_vertexlist,opt_numlist
+			if curr_action == 'F' and (merged_actionlist2[-1][-1] == 'L' or merged_actionlist2[-1][-1] == 'R'):
+				merged_actionlist2[-1] += curr_action
+				merged_vertexlist2[-1] = curr_vertex
+			else:
+				merged_actionlist2.append(curr_action)
+				merged_vertexlist2.append(curr_vertex)
+
+	# now merge all the F's together
+	# as long as they have been all visited
+	merged_actionlist3 = []
+	merged_vertexlist3 = []
+	for curr_action, curr_vertex in zip(merged_actionlist2,merged_vertexlist2):
+		if len(merged_actionlist3) == 0:
+			merged_actionlist3.append(curr_action)
+			merged_vertexlist3.append(curr_vertex)
+		else:
+			if curr_action == 'F' and merged_actionlist3[-1] == len(merged_actionlist3[-1])*'F' and maze.is_visited(curr_vertex[0],curr_vertex[1]) and maze.is_visited(merged_vertexlist3[-1][0],merged_vertexlist3[-1][1]):
+				merged_actionlist3[-1] += curr_action
+				merged_vertexlist3[-1] = curr_vertex
+			else:
+				merged_actionlist3.append(curr_action)
+				merged_vertexlist3.append(curr_vertex)
+
+	return merged_actionlist3, merged_vertexlist3
+
+
 
 
 def odom_callback(msg):
@@ -543,7 +541,6 @@ def turn(action,num_steps=1):
 		if abs(vel_msg.angular.z)+asign*WACCEL/RATE >= WMIN and abs(vel_msg.angular.z)+asign*WACCEL/RATE <= WMAX: 
 			vel_msg.angular.z += sign*(asign*WACCEL)/RATE
 		vel_pub.publish(vel_msg)
-		# TODO fix the deceleration start time
 		r.sleep()
 
 
@@ -560,8 +557,8 @@ def smoothturn(action,rwall=None,fwall=None,lwall=None):
 	else:
 		sign = -1
 
-	radius = 0.05				# radius of the turn
-	t = (np.pi*radius/2.0)/VMIN		# how much time to complete the turn
+	radius = RADTURN			# radius of the turn
+	t = (np.pi*radius/2.0)/VTURN		# how much time to complete the turn
 
 	straight_for_smoothturn( (LEN/2-radius+MOTOR_OFFSET), +1, rwall, fwall, lwall)
 	r = rospy.Rate(RATE)
@@ -572,7 +569,7 @@ def smoothturn(action,rwall=None,fwall=None,lwall=None):
 		angle += abs(euler_from_quaternion(quat)[2])
 		prev_inv_orientation = [pose.orientation.x, pose.orientation.y, pose.orientation.z, -pose.orientation.w]
 
-		vel_msg.linear.x = VMIN
+		vel_msg.linear.x = VTURN
 		vel_msg.angular.z = sign*(np.pi/2)/t
 		vel_pub.publish(vel_msg)
 		r.sleep()	
@@ -678,9 +675,9 @@ def forward(num_steps=1, fwd_corr = True):
 	return rwall, fwall, lwall
 
 
-def halfforward(rwall=None,fwall=None,lwall=None):
+def halfforward(rwall=None,fwall=None,lwall=None,vstart=VMIN,accel=0):
 	vel_msg = Twist()
-	vel_msg.linear.x = VMIN
+	vel_msg.linear.x = vstart
 
 	r = rospy.Rate(RATE) # hz
 	dist = 0.0
@@ -755,6 +752,11 @@ def halfforward(rwall=None,fwall=None,lwall=None):
 		#print "Error: {0:.3f}".format(err)
 		#print "Angular velocity: {0:.2f}".format(vel_msg.angular.z)
 		#print ranges
+
+		# adjust speed
+		vel_msg.linear.x += accel/RATE
+		vel_msg.linear.x = min(max(vel_msg.linear.x,VMIN),VMAX)
+
 		vel_msg.angular.z = err*KP + (err-prev_err)*KD
 		prev_err = err
 		vel_pub.publish(vel_msg)
@@ -765,7 +767,7 @@ def halfforward(rwall=None,fwall=None,lwall=None):
 	fwall = fwall_hist.count(True)>fwall_hist.count(False)
 	lwall = lwall_hist.count(True)>lwall_hist.count(False)
 	
-	return rwall, fwall, lwall
+	return rwall, fwall, lwall, vel_msg.linear.x
 
 
 def straight_for_smoothturn(targetdist,dir,rwall=None,fwall=None,lwall=None):
@@ -842,25 +844,47 @@ def make_first_move(maze):
 	# find an open wall
 	# move for half a cell
 	action = ''
-	while not walls[1] == False:
+	while ranges[1] < LEN/2:
 		turn('L',1)
 		stop()
 		action += 'L'
 
 	action += 'F'
-	r,f,l = halfforward()
+	r,f,l,_ = halfforward()
 	stop()
 	maze.update_pose(action,1)
 	maze.update_cell(r,f,l)
 	return r,f,l
 
 
-def execute_action(action,r=None,f=None,l=None):
+def execute_action(action,r=None,f=None,l=None,num_steps=1):
 
 	if action == 'F':
-		halfforward(r,f,l)
-		stop()
-		r,f,l = halfforward()
+		v = VMIN
+		# sensor readings are unreliable in the second half of a cell
+		ignoresensors = False
+		for i in range(num_steps):
+			if ignoresensors:		
+				r = None
+				f = None
+				l = None
+			r,f,l,v = halfforward(r,f,l,v,LINACCEL)
+			ignoresensors = not ignoresensors
+
+		# decelerate when the distance to travel is short enough
+		# that we may just about reach VMIN		
+		for i in range(num_steps):
+			if ignoresensors:		
+				r = None
+				f = None
+				l = None
+			if (VMIN*VMIN-v*v)/2.0/(-LINACCEL) > (num_steps-i)*LEN/2:	#TODO deceleration should be faster
+				accel = -3*LINACCEL
+			else:
+				accel = 0.0
+			r,f,l,v = halfforward(r,f,l,v,accel)
+			ignoresensors = not ignoresensors
+
 	elif action == 'RF':
 		r,f,l = smoothturn('R',r,f,l)
 	elif action == 'LF':
@@ -868,11 +892,11 @@ def execute_action(action,r=None,f=None,l=None):
 	elif action == 'RRF':
 		halfforward(r,f,l)
 		turn('R',2)
-		r,f,l = halfforward()
+		r,f,l,_ = halfforward()
 	elif action == 'LLF':
 		halfforward(r,f,l)
 		turn('L',2)
-		r,f,l = halfforward()
+		r,f,l,_ = halfforward()
 	elif action == 'L':
 		halfforward(r,f,l)
 		turn('L')
@@ -906,8 +930,8 @@ def execute_action(action,r=None,f=None,l=None):
 	return r,f,l
 
 
-def wallfollow():
-	r,f,l = halfforward()	
+def wallfollow(maze):
+	r,f,l,_ = halfforward()	
 	stop()
 	maze.update_pose('F',1)
 	maze.update_cell(r,f,l)
@@ -946,45 +970,62 @@ def wallfollow():
 
 def goto(goal_row,goal_col):
 	
-	starttime = rospy.Time.now()
 	r,f,l = make_first_move(maze)
 	actionlist,vertexlist = maze.get_path(goal_row,goal_col,None)
+	actionlist,vertexlist = get_opt_path(actionlist,vertexlist,maze)
 
 	maze.prettyprint_maze(vertexlist)
+	starttime = rospy.Time.now()
 	while len(actionlist) > 0:
 		action = actionlist.pop(0)
-		while not action[-1] == 'F' and len(actionlist) > 0:
-			action += actionlist.pop(0)
-		r,f,l = execute_action(action,r,f,l)
-		maze.update_pose(action,1)
+		if action == len(action)*'F':
+			num_steps = len(action)
+			action = 'F'
+		else:
+			num_steps = 1
+		r,f,l = execute_action(action,r,f,l,num_steps)
+
+		maze.update_pose(action,num_steps)
 		if not (r == None or f == None or l == None):
 			maze.update_cell(r,f,l)
 		actionlist,vertexlist = maze.get_path(goal_row,goal_col,None)
+		actionlist,vertexlist = get_opt_path(actionlist,vertexlist,maze)
+		
 		maze.prettyprint_maze(vertexlist)
+		print(action)
+		print(maze.curr_row, maze.curr_col, maze.curr_dir)
 		print (rospy.Time.now()-starttime).to_sec()
 	if action[-1] == 'F':
 		halfforward(r,f,l)
+	stop()
 
-def test():
 
-	# Starts a new node
-	rospy.init_node('vayu', anonymous=False)
-	rospy.Subscriber('scan', LaserScan, scan_callback, queue_size=1)
-	rospy.Subscriber('odom', Odometry, odom_callback, queue_size=1)
+def test(maze):
 	
-	# wait until you get first scan
-	r = rospy.Rate(RATE)
-	while len(ranges) < 3:
-		print("Waiting for scan")
-		print(ranges)
-		r.sleep()
+	global LINACCEL, VMIN, VMAX, RADTURN, VTURN
+	for i in range(10):
+	    	goto(8,8)
+		maze.dump('maze.mz')
+	    	rospy.sleep(2)
+	    	VMAX += 0.1
+	    	goto(0,0)
+		maze.dump('maze.mz')
+	    	rospy.sleep(2)
+		VMAX += 0.1
+		#LINACCEL += 0.01
 
-	maze = Maze(16,0,0)
-	goal_row = 8
-	goal_col = 8
-	
-	r,f,l = make_first_move(maze)
-	print(r,f,l)
+
+def search(maze):
+	global LINACCEL, VMIN, VMAX
+	for i in range(10):
+	    	goto(8,8)
+	    	rospy.sleep(2)
+	    	VMAX += 0.1
+	    	goto(0,0)
+	    	rospy.sleep(2)
+		VMAX += 0.1
+		#LINACCEL += 0.01
+
 			
 
 def init():
@@ -1001,25 +1042,15 @@ def init():
 	print(ranges)
 	r.sleep()
 
-    maze = Maze(16,0,0)
-
-    #wallfollow()
-    goto(8,8)
-    rospy.sleep(2)
-    goto(0,0)
-    rospy.sleep(2)
-    goto(8,8)
-    rospy.sleep(2)
-    goto(0,0)
-    rospy.sleep(2)
-    goto(8,8)
-    rospy.sleep(2)
-    goto(0,0)
-
 
 if __name__ == '__main__':
     try:
-        #Testing our function
-	#test()
+	#maze = Maze(16,0,0)
+	maze = pickle.load(open('maze.mz','rb'))
+	maze.set_curr_pose(0,0,'N')
         init()
+	#search(maze)
+	#wallfollow(maze)
+	test(maze)
+	
     except rospy.ROSInterruptException: pass
