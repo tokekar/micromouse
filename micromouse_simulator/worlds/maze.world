@@ -10,7 +10,7 @@
           <name>vayu</name>
           <static>true</static>
           <use_model_frame>true</use_model_frame>
-          <xyz>0 0 2</xyz>
+          <xyz>0 -0.25 0.75</xyz>
           <inherit_yaw>false</inherit_yaw>
         </track_visual>
 	</camera>
@@ -40,8 +40,8 @@
     </include>
 
     <physics type="ode">
-      <real_time_update_rate>200.0</real_time_update_rate>
-      <max_step_size>0.005</max_step_size>
+      <real_time_update_rate>500.0</real_time_update_rate>
+      <max_step_size>0.002</max_step_size>
       <real_time_factor>1</real_time_factor>
       <ode>
         <solver>
