@@ -44,6 +44,9 @@
   <material name="green">
     <color rgba="0.1 0.7 0.1 1"/>
   </material>
+  <material name="darkgrey">
+    <color rgba="0.1 0.1 0.1 1"/>
+  </material>
 
   <!--Base Footprint-->
   <link name="base_footprint">
@@ -123,10 +126,6 @@
       <material name="green"/>
     </collision>
 
-    <inertial>
-      <mass value="5"/>
-      <inertia ixx="0.00022083" ixy="0.0" ixz="0.0" iyy="0.00022083" iyz="0.0" izz="0.00040833"/>
-    </inertial>
   </link>
 
   <!--base_link to base_footprint Joint-->
@@ -144,6 +143,10 @@
       </geometry>
       <material name="black"/>
     </visual>
+        <inertial>
+      <mass value="0.1"/>
+      <inertia ixx="0.00022083" ixy="0.0" ixz="0.0" iyy="0.00022083" iyz="0.0" izz="0.00040833"/>
+    </inertial>
   </link>
 
   <joint name="circuit_joint" type="fixed">
@@ -152,7 +155,7 @@
     <child link="circuit_link" />
   </joint>
 
- 
+
 <link name="back_caster_link">
 <visual>
       <origin xyz="${caster_wheel_offset} 0 -${base_zoffset+base_thickness/2+caster_wheel_radius}" rpy="0 0 0"/>
@@ -192,7 +195,7 @@
         </geometry>
       </collision>
       <inertial>
-      <mass value="1"/>
+      <mass value="0.025"/>
       <inertia ixx="2.3e-06" ixy="0.0" ixz="0.0" iyy="2.3e-06" iyz="0.0" izz="4.5e-06"/>
     </inertial>
     </link>
@@ -210,6 +213,51 @@
   <!--Create Left & Right Wheel links/joints-->
   <xacro:wheel prefix="left" reflect="1"/>
   <xacro:wheel prefix="right" reflect="-1"/>
+
+  <!--Tire link & joint macro-->
+  <xacro:macro name="tire" params="prefix reflect">
+    <link name="${prefix}_tire">
+      <visual>
+        <origin xyz="0 0 ${wheel_radius}" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.003 ${wheel_thickness} 0.003"/>
+        </geometry>
+        <material name="darkgrey"/>
+      </visual>
+      <visual>
+        <origin xyz="0 0 ${-wheel_radius}" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.003 ${wheel_thickness} 0.003"/>
+        </geometry>
+        <material name="darkgrey"/>
+      </visual>
+      <visual>
+        <origin xyz="${wheel_radius} 0 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.003 ${wheel_thickness} 0.003"/>
+        </geometry>
+        <material name="darkgrey"/>
+      </visual>
+      <visual>
+        <origin xyz="${-wheel_radius} 0 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.003 ${wheel_thickness} 0.003"/>
+        </geometry>
+        <material name="darkgrey"/>
+      </visual>
+    </link>
+
+    <joint name="${prefix}_tire_joint" type="fixed">
+      <parent link="${prefix}_wheel"/>
+      <child link="${prefix}_tire"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </joint>
+  </xacro:macro>
+
+  <!--Create Left & Right Wheel links/joints-->
+  <xacro:tire prefix="left" reflect="1"/>
+  <xacro:tire prefix="right" reflect="-1"/>
+
 
   <!--Motor link & joint macro-->
   <xacro:macro name="motor" params="prefix reflect">
@@ -245,22 +293,73 @@
   <!--Laser-->
   <link name="sensor_laser">
     <visual>
+      <origin xyz="0 0.015 0" rpy="0 ${pi/2} ${pi/3}"/>
       <geometry>
-        <box size="${laser_size_x} ${laser_size_y} ${laser_size_z}"/>
+        <cylinder radius="${laser_size_z/2}" length="${laser_size_x*3/2}"/>
       </geometry>
       <material name="red"/>
     </visual>
-    <collision>
+    <visual>
+      <origin xyz="0 -0.015 0" rpy="0 ${pi/2} ${-pi/3}"/>
       <geometry>
-        <box size="${laser_size_x} ${laser_size_y} ${laser_size_z}"/>
+        <cylinder radius="${laser_size_z/2}" length="${laser_size_x*3/2}"/>
       </geometry>
-    </collision>
+      <material name="red"/>
+    </visual>
   </link>
 
   <joint name="sensor_laser_joint" type="fixed">
     <origin xyz="${laser_origin_x} ${laser_origin_y} ${laser_origin_z}" rpy="0 0 0" />
     <parent link="base_link"/>
     <child link="sensor_laser" />
+  </joint>
+
+<!--Laser-->
+  <link name="sensor_laser_rf">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 ${pi/2} 0"/>
+      <geometry>
+        <cylinder radius="${laser_size_z/2}" length="${laser_size_x}"/>
+      </geometry>
+      <material name="red"/>
+    </visual>
+    <visual>
+      <origin xyz="${laser_size_x-laser_size_z/2} 0 0" rpy="0 ${pi/2} 0"/>
+      <geometry>
+        <sphere radius="${laser_size_z/2}"/>
+      </geometry>
+      <material name="red"/>
+    </visual>
+  </link>
+
+  <joint name="sensor_laser_rf_joint" type="fixed">
+    <origin xyz="${wheel_joint_offset+base_len/2+(mouse_len-base_len-base_curve_radius)-laser_size_x/2} ${-(mouse_width/2-laser_size_y/2)} ${laser_origin_z}" rpy="0 0 0" />
+    <parent link="base_link"/>
+    <child link="sensor_laser_rf" />
+  </joint>
+
+<!--Laser-->
+  <link name="sensor_laser_lf">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 ${pi/2} 0"/>
+      <geometry>
+        <cylinder radius="${laser_size_z/2}" length="${laser_size_x}"/>
+      </geometry>
+      <material name="red"/>
+    </visual>
+    <visual>
+      <origin xyz="${laser_size_x-laser_size_z/2} 0 0" rpy="0 ${pi/2} 0"/>
+      <geometry>
+        <sphere radius="${laser_size_z/2}"/>
+      </geometry>
+      <material name="red"/>
+    </visual>
+  </link>
+
+  <joint name="sensor_laser_lf_joint" type="fixed">
+    <origin xyz="${wheel_joint_offset+base_len/2+(mouse_len-base_len-base_curve_radius)-laser_size_x/2} ${(mouse_width/2-laser_size_y/2)} ${laser_origin_z}" rpy="0 0 0" />
+    <parent link="base_link"/>
+    <child link="sensor_laser_lf" />
   </joint>
 
 

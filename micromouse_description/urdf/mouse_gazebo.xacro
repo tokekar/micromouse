@@ -5,6 +5,14 @@
     <material>Gazebo/Red</material>
   </gazebo>
 
+  <gazebo reference="sensor_laser_lf">
+    <material>Gazebo/Red</material>
+  </gazebo>
+
+  <gazebo reference="sensor_laser_rf">
+    <material>Gazebo/Red</material>
+  </gazebo>
+
   <gazebo reference="front_caster_link">
     <material>Gazebo/Black</material>
               <mu1>0</mu1>
@@ -26,6 +34,15 @@
               <maxVel>0.01</maxVel>
               <minDepth>0</minDepth>
   </gazebo>
+
+  <gazebo reference="left_tire">
+    <material>Gazebo/DarkGrey</material>
+  </gazebo>
+
+  <gazebo reference="right_tire">
+    <material>Gazebo/DarkGrey</material>
+  </gazebo>
+
 
   <gazebo reference="left_wheel">
     <material>Gazebo/Black</material>
@@ -89,24 +106,6 @@
               <minDepth>0</minDepth>
   </gazebo>
 
-  <gazebo reference="led">
- <material>
-            <ambient>1 0.2 0.2 1</ambient>
-            <diffuse>1 0.2 0.2 1</diffuse>
-            <specular>1 1 1 1</specular>
-            <emissive>1 0.2 0.2 1</emissive>
-          </material>
-        <light name='button' type='point'>
-          <pose>0 0 0.05 0 0 0</pose>
-          <attenuation>
-            <range>0.02</range>
-            <linear>0.10</linear>
-          </attenuation>
-          <diffuse>1 0.2 0.2 1</diffuse>
-          <specular>1 1 1 1</specular>
-        </light>
-  </gazebo>
-
   <gazebo>
     <plugin name="differential_drive_controller" filename="libgazebo_ros_diff_drive.so">
       <alwaysOn>false</alwaysOn>
@@ -128,7 +127,7 @@
   <gazebo reference="sensor_laser">
     <sensor type="ray" name="head_hokuyo_sensor">
       <pose>0 0 0 0 0 0</pose>
-      <visualize>true</visualize>
+      <visualize>false</visualize>
       <update_rate>200</update_rate>
       <ray>
         <scan>
@@ -153,6 +152,72 @@
       <plugin name="gazebo_ros_head_hokuyo_controller" filename="libgazebo_ros_laser.so">
         <topicName>scan</topicName>
         <frameName>sensor_laser</frameName>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+<!--Gazebo Hokuyo Laser Plugin-->
+  <gazebo reference="sensor_laser_rf">
+    <sensor type="ray" name="rf_hokuyo_sensor">
+      <pose>0 0 0 0 0 0</pose>
+      <visualize>false</visualize>
+      <update_rate>200</update_rate>
+      <ray>
+        <scan>
+          <horizontal>
+            <samples>1</samples>
+            <resolution>1</resolution>
+            <min_angle>-0.1</min_angle>
+            <max_angle>-0.1</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <min>0.01</min>
+          <max>0.25</max>
+          <resolution>0.005</resolution>
+        </range>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.01</stddev>
+        </noise>
+      </ray>
+      <plugin name="gazebo_ros_head_hokuyo_controller" filename="libgazebo_ros_laser.so">
+        <topicName>scanrf</topicName>
+        <frameName>sensor_laser_rf</frameName>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+<!--Gazebo Hokuyo Laser Plugin-->
+  <gazebo reference="sensor_laser_lf">
+    <sensor type="ray" name="lf_hokuyo_sensor">
+      <pose>0 0 0 0 0 0</pose>
+      <visualize>false</visualize>
+      <update_rate>200</update_rate>
+      <ray>
+        <scan>
+          <horizontal>
+            <samples>1</samples>
+            <resolution>1</resolution>
+            <min_angle>0.1</min_angle>
+            <max_angle>0.1</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <min>0.01</min>
+          <max>0.25</max>
+          <resolution>0.005</resolution>
+        </range>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.01</stddev>
+        </noise>
+      </ray>
+      <plugin name="gazebo_ros_head_hokuyo_controller" filename="libgazebo_ros_laser.so">
+        <topicName>scanlf</topicName>
+        <frameName>sensor_laser_lf</frameName>
       </plugin>
     </sensor>
   </gazebo>
