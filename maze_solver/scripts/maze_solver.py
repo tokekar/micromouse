@@ -21,7 +21,7 @@ LINACCEL = 0.2
 WMIN = np.pi/1.25
 WMAX = np.pi/0.25
 WACCEL = np.pi/2
-MIN_DIAG_LEN = 20
+MIN_DIAG_LEN = 0
 
 RATE = 100
 KP = -30.0
@@ -747,8 +747,8 @@ def diagonal(startturn,endturn,num_steps=1):
 	prev_err = 0
 	targetdist = 1*((LEN/np.sqrt(2))*(num_steps-2) + 0.22)
 
-	ltrigger = -1
-	rtrigger = -1
+	itrigger = -1
+	otrigger = -1
 	time_delay = 0
 	while dist + (1/RATE+time_delay)*abs(vel_msg.linear.x) <= targetdist:
 
@@ -790,36 +790,29 @@ def diagonal(startturn,endturn,num_steps=1):
 		# check if we need to do a high-to-low transition
 		# only do it for the inner wall
 
-		print(sensors.get_diagl_distance())
-		print(sensors.get_diagr_distance())
-		print()
-		if ltrigger == -1 and sensors.get_diagl_distance() < 6*LEN/10:
-			ltrigger = 0
-		# now check if there is a low-to-high transition
-		if ltrigger == 0 and sensors.get_diagl_distance() > 7.5*LEN/10:
-			ltrigger = -1
-			#print("Transition")
-			#print "{0:.2f}".format(dist-0.11)
-			dist = max(round((dist-0.11)/(LEN*np.sqrt(2))),0)*(LEN*np.sqrt(2))+0.11
-			stop()
-			rospy.sleep(2)
-			#print "{0:.2f}".format(dist-0.11)
-			#print "{0:.2f}".format(dist)
-			#print "{0:.2f}\n".format(targetdist)
-		if rtrigger == -1 and sensors.get_diagr_distance() < 6*LEN/10:
-			rtrigger = 0
-		# now check if there is a low-to-high transition
-		if rtrigger == 0 and sensors.get_diagr_distance() > 7.5*LEN/10:
-			rtrigger = -1
-			#print("Transition")
-			#print "{0:.2f}".format(dist-0.11)
-			dist = max(round((dist-0.11)/(LEN*np.sqrt(2))),0)*(LEN*np.sqrt(2))+0.11
-			stop()
-			rospy.sleep(2)
-			#print "{0:.2f}".format(dist-0.11)
-			#print "{0:.2f}".format(dist)
-			#print "{0:.2f}\n".format(targetdist)
+		if startturn=='R':
+			inner_diag_distance = sensors.get_diagr_distance()
+			outer_diag_distance = sensors.get_diagl_distance()
+		else:
+			inner_diag_distance = sensors.get_diagl_distance()
+			outer_diag_distance = sensors.get_diagr_distance()
 
+		if itrigger == -1 and inner_diag_distance < 6*LEN/10:
+			itrigger = 0
+		if itrigger == 0 and inner_diag_distance > 7.5*LEN/10:
+			itrigger = -1
+			#print "{0:.3f}".format(dist)
+			#dist = max(round((dist-0.11)/(LEN*np.sqrt(2))),0)*(LEN*np.sqrt(2))+0.11+2*MOTOR_OFFSET
+			#print "{0:.3f}".format(dist)
+		if otrigger == -1 and outer_diag_distance < 6*LEN/10:
+			otrigger = 0
+		if otrigger == 0 and outer_diag_distance > 7.5*LEN/10:
+			otrigger = -1
+			#print "{0:.3f}".format(dist)
+			dist = max(round((dist-0.11)/(LEN*np.sqrt(2))),0)*(LEN*np.sqrt(2))+0.11
+			#print "{0:.3f}".format(dist)
+			#stop()
+			#rospy.sleep(0.5)
 
 		if dist < targetdist/2:
 			vel_msg.linear.x += LINACCEL/RATE
