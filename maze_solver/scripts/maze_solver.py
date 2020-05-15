@@ -17,11 +17,11 @@ VMIN = 0.25
 VMAX = 2.0
 VTURN = 0.25
 RADTURN = 0.05
-LINACCEL = 0.25
+LINACCEL = 0.2
 WMIN = np.pi/1.25
 WMAX = np.pi/0.25
-WACCEL = np.pi/25
-MIN_DIAG_LEN = 0
+WACCEL = np.pi/2
+MIN_DIAG_LEN = 20
 
 RATE = 100
 KP = -30.0
@@ -357,7 +357,7 @@ class Maze():
 
 		vertexlist = [(v[0],v[1]) for v in vertexlist]
 
-		os.system('clear')
+		#os.system('clear')
 
 		# print line by line
 		# starting with the northmost wall
@@ -748,6 +748,7 @@ def diagonal(startturn,endturn,num_steps=1):
 	targetdist = 1*((LEN/np.sqrt(2))*(num_steps-2) + 0.22)
 
 	ltrigger = -1
+	rtrigger = -1
 	time_delay = 0
 	while dist + (1/RATE+time_delay)*abs(vel_msg.linear.x) <= targetdist:
 
@@ -788,19 +789,33 @@ def diagonal(startturn,endturn,num_steps=1):
 		# reset the distance when you notice a high-to-low and then low-to-high transition
 		# check if we need to do a high-to-low transition
 		# only do it for the inner wall
-		if startturn == 'R':
-			outer_range = sensors.get_diagl_distance()
-		else:
-			outer_range = sensors.get_diagr_distance()
 
-		if ltrigger == -1 and outer_range < 6*LEN/10:
+		print(sensors.get_diagl_distance())
+		print(sensors.get_diagr_distance())
+		print()
+		if ltrigger == -1 and sensors.get_diagl_distance() < 6*LEN/10:
 			ltrigger = 0
 		# now check if there is a low-to-high transition
-		if ltrigger == 0 and outer_range > 7.5*LEN/10:
+		if ltrigger == 0 and sensors.get_diagl_distance() > 7.5*LEN/10:
 			ltrigger = -1
 			#print("Transition")
 			#print "{0:.2f}".format(dist-0.11)
 			dist = max(round((dist-0.11)/(LEN*np.sqrt(2))),0)*(LEN*np.sqrt(2))+0.11
+			stop()
+			rospy.sleep(2)
+			#print "{0:.2f}".format(dist-0.11)
+			#print "{0:.2f}".format(dist)
+			#print "{0:.2f}\n".format(targetdist)
+		if rtrigger == -1 and sensors.get_diagr_distance() < 6*LEN/10:
+			rtrigger = 0
+		# now check if there is a low-to-high transition
+		if rtrigger == 0 and sensors.get_diagr_distance() > 7.5*LEN/10:
+			rtrigger = -1
+			#print("Transition")
+			#print "{0:.2f}".format(dist-0.11)
+			dist = max(round((dist-0.11)/(LEN*np.sqrt(2))),0)*(LEN*np.sqrt(2))+0.11
+			stop()
+			rospy.sleep(2)
 			#print "{0:.2f}".format(dist-0.11)
 			#print "{0:.2f}".format(dist)
 			#print "{0:.2f}\n".format(targetdist)
@@ -1129,7 +1144,7 @@ def execute_action(action,r=None,f=None,l=None):
 	elif action == 'RRF':
 		halfforward(r,f,l)
 		turn('R',2)
-		straight_for_smoothturn(2*MOTOR_OFFSET,-1)
+		straight_for_smoothturn(MOTOR_OFFSET,-1)
 		halfforward()
 		r = None
 		f = None
@@ -1137,7 +1152,7 @@ def execute_action(action,r=None,f=None,l=None):
 	elif action == 'LLF':
 		halfforward(r,f,l)
 		turn('L',2)
-		straight_for_smoothturn(2*MOTOR_OFFSET,-1)
+		straight_for_smoothturn(MOTOR_OFFSET,-1)
 		halfforward()
 		r = None
 		f = None
@@ -1173,7 +1188,10 @@ def execute_action(action,r=None,f=None,l=None):
 			diagonal(action[0],action[-2],len(action)/2)
 		else:
 			for i in range(len(action)):
-				r,f,l = execute_action(action[2*i:2*i+2],r,f,l)
+				if action[2*i:2*i+2] == 'RF':
+					r,f,l = smoothturn('R',r,f,l)
+				elif action[2*i:2*i+2] == 'LF':
+					r,f,l = smoothturn('L',r,f,l)
 		r = None
 		f = None
 		l = None
@@ -1247,6 +1265,8 @@ def goto(goal_rows,goal_cols,goal_dirs=None):
 		actionlist,vertexlist = get_opt_path(actionlist,vertexlist,maze)
 
 		maze.prettyprint_maze(vertexlist)
+		print(maze.curr_row,maze.curr_col,maze.curr_dir)
+		print(r,f,l)
 		print (rospy.Time.now()-starttime).to_sec()
 		#stop()
 	if action[-1] == 'F':
