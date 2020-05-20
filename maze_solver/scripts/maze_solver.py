@@ -9,33 +9,42 @@ import pickle
 from termcolor import colored
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import Imu
 from nav_msgs.msg import Odometry
 from tf.transformations import euler_from_quaternion, quaternion_multiply
 
 vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
-VMIN = 0.25
-VMAX = 2.0
-VTURN = 0.25
+VMIN = 0.2
+VMAX = 3.0
+VTURN = 0.2
 RADTURN = 0.05
 LINACCEL = 0.2
+DIAGACCEL = 0.2
 WMIN = np.pi/1.25
 WMAX = np.pi/0.25
-WACCEL = np.pi/2
+WACCEL = np.pi/1
 MIN_DIAG_LEN = 0
 
 RATE = 100
-KP = -30.0
-KD = -20
+KP = -25.0
+KD = -10
+#K2 = 60
+#K1 = 2*np.sqrt(K2)
+#KP = -30.0
+#KD = 60.0
 
 LEN = 0.18
 WALL_THICKNESS = 0.01
 MOTOR_OFFSET = 0.01			#offset between mouse center and axel center
 
 pose = []
-pose_header = []
+imu = None
+twist = []
+imudist = 0
+imuvel = 0
 
-MAX_FRONT_WALL_DIST = 1.5*LEN
-MAX_SIDE_WALL_DIST = 0.8*LEN		#worst case scenario where you can still detect side wall
+MAX_FRONT_WALL_DIST = 1.75*LEN
+MAX_SIDE_WALL_DIST = 0.75*LEN		#worst case scenario where you can still detect side wall
 FRONT_SENSOR_OFFSET = 0.0525
 FRONTLR_SENSOR_OFFSET = 0.0385
 FRONTLR_SENSOR_COSANGLE = np.cos(0.1)
@@ -48,6 +57,50 @@ COSTS = {'F': 1, 'L': 0.1, 'R': 0.1}
 # Globals
 maze = []
 sensors = []
+
+class Motors():
+
+	def get_distance(self):
+		return self.dist
+
+	def get_curr_orientation(self):
+		return euler_from_quaternion([self.pose.pose.orientation.x,
+		self.pose.orientation.y,
+		self.pose.orientation.z,
+		self.pose.orientation.w])[2]
+
+	def get_curr_position(self):
+		return self.pose.position
+
+	def get_curr_pose(self):
+		return self.pose
+
+	def update(self,pose):
+		if self.valid:
+			self.pose = pose	# new data that came in
+			self.dist += np.sqrt(
+			(self.pose.position.x - self.prev_pose.position.x)**2 +
+			(self.pose.position.y - self.prev_pose.position.y)**2 )
+			self.prev_pose = self.pose
+		else:
+			self.pose = pose
+			self.prev_pose = pose
+			self.valid = True
+
+	def reset(self,wait_for_data=True):
+		self.dist = 0
+		self.angle = 0
+		self.valid = False
+		self.pose = Odometry()
+		self.prev_pose = Odometry()
+
+		if wait_for_data:
+			r = rospy.Rate(RATE)
+			while not self.valid:
+				r.sleep()
+
+	def __init__(self):
+		self.reset(False)
 
 class Sensors():
 
@@ -182,8 +235,9 @@ class GridGraph():
 	def add_edge(self,u,v,action):
 		self.graph[u][v] = action
 
-	def update_edges(self,row,col,dir,rwall,fwall,lwall):
+	def update_forward_edges(self,row,col,dir,rwall,fwall,lwall):
 		if dir == 'N':
+			# orthogonal edges
 			if fwall == False and row+1 < self.dim:
 				self.add_edge( (row,col,'N'), (row+1,col,'N'), 'F')
 				self.add_edge( (row+1,col,'S'), (row,col,'S'), 'F')
@@ -290,7 +344,7 @@ class GridGraph():
 
 		# assume maze is empty
 		for n in list(self.graph):
-			self.update_edges(n[0],n[1],n[2],False,False,False)
+			self.update_forward_edges(n[0],n[1],n[2],False,False,False)
 
 
 
@@ -357,7 +411,7 @@ class Maze():
 
 		vertexlist = [(v[0],v[1]) for v in vertexlist]
 
-		#os.system('clear')
+		os.system('clear')
 
 		# print line by line
 		# starting with the northmost wall
@@ -458,6 +512,65 @@ class Maze():
 			else:
 				rospy.logwarn('Wrong action in update_pose')
 
+	def get_expected_pose(self,action):
+		row = self.curr_row
+		col = self.curr_col
+		dir = self.curr_dir
+		for a in action:
+			if a ==  'F':
+				if self.curr_dir == 'N':
+					row = row + 1
+				elif self.curr_dir == 'S':
+					row = row - 1
+				elif self.curr_dir == 'E':
+					col = col + 1
+				elif self.curr_dir == 'W':
+					col = col - 1
+			elif a == 'R':
+				dir = DIRS[np.mod(DIRS[dir]-1,4)]
+			elif a == 'L':
+				dir = DIRS[np.mod(DIRS[dir]+1,4)]
+			else:
+				rospy.logwarn('Wrong action in get_expected_pose')
+		return (row,col,dir)
+
+	def get_expected_transitions(self,action):
+		row = self.curr_row
+		col = self.curr_col
+		dir = self.curr_dir
+
+		r,f,l = self.get_cell(row,col,dir)
+		r_count = 0
+		f_count = 0
+		l_count = 0
+
+		for a in action:
+			if a == 'F':
+				if self.curr_dir == 'N':
+					row = row + 1
+				elif self.curr_dir == 'S':
+					row = row - 1
+				elif self.curr_dir == 'E':
+					col = col + 1
+				elif self.curr_dir == 'W':
+					col = col - 1
+			elif a == 'R':
+				dir = DIRS[np.mod(DIRS[dir]-1,4)]
+			elif a == 'L':
+				dir = DIRS[np.mod(DIRS[dir]+1,4)]
+			else:
+				rospy.logwarn('Wrong action in get_expected_pose')
+
+			nextr, nextf, nextl = self.get_cell(row,col,dir)
+			if not r == nextr:
+				r_count += 1
+			if not f == nextf:
+				f_count += 1
+			if not l == nextl:
+				l_count += 1
+			r, f, l = nextr, nextf, nextl
+		return r_count, f_count, l_count
+
 	def update_cell(self,rwall,fwall,lwall,row=None,col=None,dir=None,visited=True):
 		if row == None:
 			row = self.curr_row
@@ -484,7 +597,7 @@ class Maze():
 			self.set_wall('S',lwall,row,col)
 
 		self.cells[row][col].set_visited(visited)
-		self.gridgraph.update_edges(row,col,dir,rwall,fwall,lwall)
+		self.gridgraph.update_forward_edges(row,col,dir,rwall,fwall,lwall)
 
 	def get_cell(self,row=None,col=None,dir=None):
 		if row == None:
@@ -520,7 +633,11 @@ class Maze():
 		return rwall,fwall,lwall
 
 
-	def is_visited(self,row,col):
+	def is_visited(self,row=None,col=None):
+		if row == None:
+			row = self.curr_row
+		if col == None:
+			col = self.curr_col
 		return self.cells[row][col].is_visited()
 
 	def set_wall(self,walldir,exists=True,row=None,col=None):
@@ -657,10 +774,19 @@ def get_opt_path(actionlist,vertexlist,maze):
 
 
 def odom_callback(msg):
-	global pose, pose_header
+	global pose, twist, motors
 	pose = msg.pose.pose
-	pose_header = msg.header
+	twist = msg.twist.twist
+	#motors.update(pose)
 
+
+def imu_callback(msg):
+	global imu, imuvel, imudist
+	if not imu == None:
+		dt = msg.header.stamp.to_sec()-imu.header.stamp.to_sec()
+		imuvel += msg.linear_acceleration.x*dt
+		imudist += imuvel*dt
+	imu = msg
 
 
 def scan_callback(msg):
@@ -688,15 +814,12 @@ def turn(action,num_steps=1):
 
 	prev_inv_orientation = [pose.orientation.x, pose.orientation.y, pose.orientation.z, -pose.orientation.w]
 	angle = 0
-	time_delay = 0
-	while abs(angle)+(1/RATE+time_delay)*abs(vel_msg.angular.z) < num_steps*np.pi/2 - np.pi/24*num_steps:
+	while abs(angle) < num_steps*np.pi/2 - get_tolerance(vel_msg.linear.x,vel_msg.angular.z,action,num_steps).angle:
 
 		quat = quaternion_multiply([pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w],prev_inv_orientation)
 		angle = (euler_from_quaternion(quat)[2])
 		#angle += (euler_from_quaternion(quat)[2])
 		#prev_inv_orientation = [pose.orientation.x, pose.orientation.y, pose.orientation.z, -pose.orientation.w]
-
-		time_delay = (rospy.Time.now() - pose_header.stamp).to_sec()
 
 		asign = 0.0
 		if abs(angle) > num_steps/2.0*np.pi/2:
@@ -730,12 +853,10 @@ def diagonal(startturn,endturn,num_steps=1):
 
 	prev_inv_orientation = [pose.orientation.x, pose.orientation.y, pose.orientation.z, -pose.orientation.w]
 	angle = 0
-	time_delay = 0
-	while angle + (1/RATE+time_delay)*abs(vel_msg.angular.z) < np.pi/4-np.pi/30:
+	while angle < np.pi/4-get_tolerance(vel_msg.linear.x,vel_msg.angular.z,'D').angle:
 		quat = quaternion_multiply([pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w],prev_inv_orientation)
 		angle += abs(euler_from_quaternion(quat)[2])
 		prev_inv_orientation = [pose.orientation.x, pose.orientation.y, pose.orientation.z, -pose.orientation.w]
-		time_delay = (rospy.Time.now() - pose_header.stamp).to_sec()
 
 		vel_pub.publish(vel_msg)
 		r.sleep()
@@ -749,10 +870,7 @@ def diagonal(startturn,endturn,num_steps=1):
 
 	itrigger = -1
 	otrigger = -1
-	time_delay = 0
-	while dist + (1/RATE+time_delay)*abs(vel_msg.linear.x) <= targetdist:
-
-		time_delay = (rospy.Time.now() - pose_header.stamp).to_sec()
+	while dist <= targetdist:
 
 		# keep track of the distance traveled
 		dist = predict_dist(dist,prev_pos,pose.position)
@@ -770,11 +888,11 @@ def diagonal(startturn,endturn,num_steps=1):
 		if dist > targetdist - LEN/np.sqrt(2) and endturn == 'L':
 			use_rf = False
 			use_rd = False
-		if dist >= targetdist - 0.11:
+		'''if dist >= targetdist - 0.11:
 			use_lf = False
 			use_ld = False
 			use_rd = False
-			use_rf = False
+			use_rf = False'''
 
 		err = 0
 		if sensors.get_diagr_distance() < LEN/2 and use_rd:
@@ -815,9 +933,9 @@ def diagonal(startturn,endturn,num_steps=1):
 			#rospy.sleep(0.5)
 
 		if dist < targetdist/2:
-			vel_msg.linear.x += LINACCEL/RATE
+			vel_msg.linear.x += DIAGACCEL/RATE
 		else:
-			vel_msg.linear.x -= LINACCEL/RATE		# TODO hack
+			vel_msg.linear.x -= DIAGACCEL/RATE		# TODO hack
 		vel_msg.linear.x = min(max(vel_msg.linear.x,VTURN),VMAX)
 
 		vel_msg.angular.z = err*KP
@@ -836,9 +954,7 @@ def diagonal(startturn,endturn,num_steps=1):
 
 	prev_inv_orientation = [pose.orientation.x, pose.orientation.y, pose.orientation.z, -pose.orientation.w]
 	angle = 0
-	time_delay = 0
-	while angle + (1/RATE+time_delay)*abs(vel_msg.angular.z) < np.pi/4-np.pi/30:
-		time_delay = (rospy.Time.now() - pose_header.stamp).to_sec()
+	while angle < np.pi/4-get_tolerance(vel_msg.linear.x,vel_msg.angular.z,'D').angle:
 
 		quat = quaternion_multiply([pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w],prev_inv_orientation)
 		angle += abs(euler_from_quaternion(quat)[2])
@@ -846,7 +962,6 @@ def diagonal(startturn,endturn,num_steps=1):
 
 		vel_pub.publish(vel_msg)
 		r.sleep()
-
 
 
 def smoothturn(action,rwall=None,fwall=None,lwall=None):
@@ -862,16 +977,20 @@ def smoothturn(action,rwall=None,fwall=None,lwall=None):
 	t = (np.pi*radius/2.0)/VTURN		# how much time to complete the turn
 
 	straight_for_smoothturn( (LEN/2-radius+MOTOR_OFFSET), +1, rwall, fwall, lwall)
+
 	r = rospy.Rate(RATE)
 	prev_inv_orientation = [pose.orientation.x, pose.orientation.y, pose.orientation.z, -pose.orientation.w]
 	angle = 0
-	time_delay = 0
-	while angle + (1/RATE+time_delay)*abs(vel_msg.angular.z) < np.pi/2-np.pi/12:
-		time_delay = (rospy.Time.now() - pose_header.stamp).to_sec()
+	while angle + vel_msg.angular.z/RATE < np.pi/2 - get_tolerance(vel_msg.linear.x,vel_msg.angular.z,action+'F').angle:
 
 		quat = quaternion_multiply([pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w],prev_inv_orientation)
 		angle += abs(euler_from_quaternion(quat)[2])
 		prev_inv_orientation = [pose.orientation.x, pose.orientation.y, pose.orientation.z, -pose.orientation.w]
+
+		#
+		if abs(sensors.get_frontl_distance()-sensors.get_frontr_distance()) < 0.002 and angle > 3*np.pi/8:
+			print("Aligned")
+			break
 
 		vel_msg.linear.x = VTURN
 		vel_msg.angular.z = sign*(np.pi/2)/t
@@ -881,6 +1000,32 @@ def smoothturn(action,rwall=None,fwall=None,lwall=None):
 	rwall, fwall, lwall = straight_for_smoothturn( (LEN/2-radius), +1)
 	return rwall, fwall, lwall
 
+def get_tolerance(linvel,angvel,action,num_steps=1):
+	Tolerance = collections.namedtuple('Tolerance','dist angle')
+	if action == 'F':
+		#tolerance = Tolerance(dist=LEN*num_steps*(30*linvel**2/100), angle=0)
+		if linvel <= 0.6:
+			tolerance = Tolerance(dist=LEN*num_steps*0.05, angle=0)
+		elif linvel <= 1.0:
+			tolerance = Tolerance(dist=LEN*num_steps*0.2, angle=0)
+		elif linvel <= 1.5:
+			tolerance = Tolerance(dist=LEN*num_steps*0.225, angle=0)
+		else:
+			tolerance = Tolerance(dist=LEN*num_steps*0.3, angle=0)
+	elif action == 'RF' or action == 'LF':
+		if linvel <= 0.2:
+			tolerance = Tolerance(dist=None, angle=np.pi/18)
+		else:
+			tolerance = Tolerance(dist=None, angle=np.pi/18)
+	elif action == 'R' or action == 'L':
+		if angvel < np.pi/0.25:
+			tolerance = Tolerance(dist=None, angle=np.pi/30*num_steps)
+		else:
+			tolerance = Tolerance(dist=None, angle=np.pi/30*num_steps)
+	elif action == 'D':
+		tolerance = Tolerance(dist=None, angle=np.pi/24)
+
+	return tolerance
 
 def get_corrected_dist(fwall, dist, sensors):
 	if fwall and sensors.has_front_wall():
@@ -903,8 +1048,17 @@ def get_steering_error(rcorr,fcorr,lcorr,sensors):
 	elif lcorr:	# if left wall exists
 		err = sensors.get_sidel_error()
 
-	if fcorr:	# if front wall exists
-		err += sensors.get_front_error()/2
+	#if fcorr:	# if front wall exists
+	#	err += sensors.get_front_error()/2
+
+	if not np.isfinite(err):
+		err = 0
+
+	#print "{0:.3f}\t {1:.3f}".format(sensors.get_sider_error(),sensors.get_sidel_error())
+	#print "{0:.3f}\t {1:.3f}\n".format(sensors.get_sider_distance(),sensors.get_sidel_distance())
+
+	#if abs(err) < 0.01:
+	#	err = 0
 
 	return err
 
@@ -916,20 +1070,23 @@ def check_for_transition(rwall,lwall,dist,sensors):
 	# check for a wall to no wall transition
 	# if you do, round off the distance traveled
 	if (rwall == True and not sensors.has_right_wall()) or (lwall == True and not sensors.has_left_wall()):
-		#print "Wall to no wall transition"
+		print "Wall to no wall transition"
 		#print "Before: {0:.2f}".format(dist)
 		dist = round(dist/(LEN/2))*LEN/2
 		#print "After: {0:.2f}".format(dist)
+		#print "ycoord: {0:.2f}".format(pose.position.y)
 		wall_to_nowall = True
 
 	# check for no wall to wall transition
 	# if you do, we will set the wall flag and wait for wall to no wall transition
 	if (rwall == False and sensors.has_right_wall()):
-		#print "No wall to wall transition"
+		print "No wall to wall transition"
 		rwall = True
+		#print "Before: {0:.2f}".format(dist)
 	if (lwall == False and sensors.has_left_wall()):
 		#print "No wall to wall transition"
 		lwall = True
+		#print "Before: {0:.2f}".format(dist)
 
 	return wall_to_nowall,dist,rwall,lwall
 
@@ -940,26 +1097,22 @@ def predict_dist(dist,prev_position,curr_position):
 
 def halfforward(rwall=None,fwall=None,lwall=None,vstart=VMIN,accel=0):
 
-	sensors.reset()
-
 	vel_msg = Twist()
 	vel_msg.linear.x = vstart
 
 	r = rospy.Rate(RATE) # hz
 	dist = 0.0
-	prev_err = 0.0
+	prev_err = None
 	prev_pos = pose.position
 
-	lwall_hist = []
-	fwall_hist = []
-	rwall_hist = []
+	lwall_hist = [lwall]
+	fwall_hist = [fwall]
+	rwall_hist = [rwall]
 
 	rwall_new = None
 	fwall_new = None
 	lwall_new = None
-	time_delay = 0
-	while dist+(1/RATE+time_delay)*abs(vel_msg.linear.x) < LEN/2 or dist <= LEN/8:
-		time_delay = (rospy.Time.now() - pose_header.stamp).to_sec()
+	while dist + vel_msg.linear.x/RATE < LEN/2 - get_tolerance(vel_msg.linear.x,vel_msg.angular.z,'F',0.5).dist:
 
 		# keep track of the distance traveled
 		dist = predict_dist(dist,prev_pos,pose.position)
@@ -975,11 +1128,11 @@ def halfforward(rwall=None,fwall=None,lwall=None,vstart=VMIN,accel=0):
 		lwall_hist.append(sensors.has_left_wall())
 
 		# check if we've found a wall
-		if rwall == None and rwall_new == None and dist > 0.02 and len(rwall_hist) > 10 and (float(rwall_hist.count(True)+1.0)/float(rwall_hist.count(False)+1.0) > 2 or float(rwall_hist.count(False)+1.0)/float(rwall_hist.count(True)+1.0) > 2):
+		if rwall == None and rwall_new == None and dist > 0.01 and len(rwall_hist) > 5 and (float(rwall_hist.count(True)+1.0)/float(rwall_hist.count(False)+1.0) > 2 or float(rwall_hist.count(False)+1.0)/float(rwall_hist.count(True)+1.0) > 2):
 			rwall_new = rwall_hist.count(True) > rwall_hist.count(False)
-		if lwall == None and lwall_new == None and dist > 0.02 and len(lwall_hist) > 10 and (float(lwall_hist.count(True)+1.0)/float(lwall_hist.count(False)+1.0) > 2 or float(lwall_hist.count(False)+1.0)/float(lwall_hist.count(True)+1.0) > 2):
+		if lwall == None and lwall_new == None and dist > 0.01 and len(lwall_hist) > 5 and (float(lwall_hist.count(True)+1.0)/float(lwall_hist.count(False)+1.0) > 2 or float(lwall_hist.count(False)+1.0)/float(lwall_hist.count(True)+1.0) > 2):
 			lwall_new = lwall_hist.count(True) > lwall_hist.count(False)
-		if fwall == None and fwall_new == None and dist > 0.02 and len(fwall_hist) > 10 and (float(fwall_hist.count(True)+1.0)/float(fwall_hist.count(False)+1.0) > 2 or float(fwall_hist.count(False)+1.0)/float(fwall_hist.count(True)+1.0) > 2):
+		if fwall == None and fwall_new == None and dist > 0.01 and len(fwall_hist) > 5 and (float(fwall_hist.count(True)+1.0)/float(fwall_hist.count(False)+1.0) > 2 or float(fwall_hist.count(False)+1.0)/float(fwall_hist.count(True)+1.0) > 2):
 			fwall_new = fwall_hist.count(True) > fwall_hist.count(False)
 
 		# Adjust the distance only in the first half of a cell
@@ -996,9 +1149,14 @@ def halfforward(rwall=None,fwall=None,lwall=None,vstart=VMIN,accel=0):
 		vel_msg.linear.x += accel/RATE
 		vel_msg.linear.x = min(max(vel_msg.linear.x,VMIN),VMAX)
 
-		vel_msg.angular.z = err*KP + (err-prev_err)*KD
+		if not prev_err == None:
+			#print "{0:.5f}, {1:.5f}".format(err,err-prev_err)
+			vel_msg.angular.z = err*KP + (err-prev_err)*KD
 		prev_err = err
 		vel_pub.publish(vel_msg)
+
+
+		#print "{0:.5f}\n".format(motors.get_distance())
 
 		r.sleep()
 
@@ -1006,12 +1164,73 @@ def halfforward(rwall=None,fwall=None,lwall=None,vstart=VMIN,accel=0):
 	fwall = fwall_hist.count(True)>fwall_hist.count(False)
 	lwall = lwall_hist.count(True)>lwall_hist.count(False)
 
+	#motors.reset()
+
 	return rwall, fwall, lwall, vel_msg.linear.x
+
+
+def forward_targetdist(targetdist,rwall=None,fwall=False,lwall=None,vstart=VMIN,accel=0):
+
+	vel_msg = Twist()
+	vel_msg.linear.x = vstart
+
+	r = rospy.Rate(RATE) # hz
+	dist = 0.0
+	prev_err = None
+	prev_pos = pose.position
+
+	rtransition_count = 0
+	ltransition_count = 0
+	prev_rwall = sensors.has_right_wall()
+	prev_lwall = sensors.has_left_wall()
+	nearend = False
+
+	while (fwall and sensors.get_front_distance() > LEN) or (not fwall and dist < targetdist):# - get_tolerance(vel_msg.linear.x,vel_msg.angular.z,'F',targetdist/LEN).dist):
+
+		# keep track of the distance traveled
+		dist = predict_dist(dist,prev_pos,pose.position)
+		prev_pos = pose.position
+
+		# lateral correction
+		err = get_steering_error(True,True,True,sensors)
+		if not prev_err == None:
+			vel_msg.angular.z = err*KP + (err-prev_err)*KD
+		prev_err = err
+
+		# check transitions
+		#print "{0:.3f}, {1}".format(dist,int(sensors.has_right_wall()))
+		if not prev_rwall == sensors.has_right_wall():
+			rtransition_count += 1
+			prev_rwall = sensors.has_right_wall()
+		if not prev_lwall == sensors.has_left_wall():
+			ltransition_count += 1
+			prev_lwall = sensors.has_left_wall()
+		if (rtransition_count == rwall and ltransition_count == lwall) and not nearend:
+			dist = targetdist-LEN/2
+			nearend = True
+			print("Near end")
+
+		# adjust speed
+		if (VMIN*VMIN-vel_msg.linear.x*vel_msg.linear.x)/2.0/(-accel) > (targetdist-dist):	#TODO deceleration should be faster
+			asign = -1
+		elif vel_msg.linear.x < VMAX:
+			asign = 1
+		else:
+			asign = 0.0
+		vel_msg.linear.x += asign*accel/RATE
+		vel_msg.linear.x = min(max(vel_msg.linear.x,VMIN),VMAX)
+
+		vel_pub.publish(vel_msg)
+
+		r.sleep()
+
+	return vel_msg.linear.x
+
 
 
 def straight_for_smoothturn(targetdist,dir,rwall=None,fwall=None,lwall=None):
 
-	sensors.reset()
+	#sensors.reset()
 
 	vel_msg = Twist()
 	vel_msg.linear.x = dir*VMIN
@@ -1028,9 +1247,7 @@ def straight_for_smoothturn(targetdist,dir,rwall=None,fwall=None,lwall=None):
 	rwall_new = None
 	fwall_new = None
 	lwall_new = None
-	time_delay = 0
-	while (dist + (1/RATE+time_delay)*abs(vel_msg.linear.x) <= targetdist):
-		time_delay = (rospy.Time.now() - pose_header.stamp).to_sec()
+	while dist <= targetdist:
 
 		# keep track of the distance traveled
 		dist = predict_dist(dist,prev_pos,pose.position)
@@ -1086,7 +1303,7 @@ def make_first_move(maze):
 	# find an open wall
 	# move for half a cell
 	action = ''
-	while sensors.get_front_distance() < LEN/2:
+	while sensors.get_front_distance() < LEN:
 		turn('L',1)
 		stop()
 		sensors.reset(True)
@@ -1107,7 +1324,23 @@ def execute_action(action,r=None,f=None,l=None):
 	if action == len(action)*'F':
 		num_steps = len(action)
 		v = VMIN
-		# sensor readings are unreliable in the second half of a cell
+		if num_steps == 1:
+			_,_,_,v = halfforward(r,f,l,v,LINACCEL)
+			r,f,l,v = halfforward(None,None,None,v,-LINACCEL)
+		else:
+			'''(row,col,dir) = maze.get_expected_pose(action)
+			fwall = maze.get_cell(row,col,dir)[1]
+			if fwall:
+				accel = LINACCEL
+			else:
+				accel = LINACCEL'''
+			rtransition_count, ftransition_count, ltransition_count = maze.get_expected_transitions(action)
+			forward_targetdist(num_steps*LEN,rtransition_count,ftransition_count>0,ltransition_count,v,LINACCEL)
+			r = None
+			f = None
+			l = None
+
+		'''# sensor readings are unreliable in the second half of a cell
 		ignoresensors = False
 		for i in range(num_steps):
 			if ignoresensors:
@@ -1116,6 +1349,7 @@ def execute_action(action,r=None,f=None,l=None):
 				l = None
 			r,f,l,v = halfforward(r,f,l,v,LINACCEL)
 			ignoresensors = not ignoresensors
+			print(v, twist.linear.x)
 
 		# decelerate when the distance to travel is short enough
 		# that we may just about reach VMIN
@@ -1125,27 +1359,30 @@ def execute_action(action,r=None,f=None,l=None):
 				f = None
 				l = None
 			if (VMIN*VMIN-v*v)/2.0/(-LINACCEL) > (num_steps-i)*LEN/2:	#TODO deceleration should be faster
-				accel = -3*LINACCEL
+				accel = -1*LINACCEL
 			else:
 				accel = 0.0
 			r,f,l,v = halfforward(r,f,l,v,accel)
 			ignoresensors = not ignoresensors
+			print(v, twist.linear.x)'''
 	elif action == 'RF':
 		r,f,l = smoothturn('R',r,f,l)
 	elif action == 'LF':
 		r,f,l = smoothturn('L',r,f,l)
-	elif action == 'RRF':
+	elif action == 'RRF' or action == 'LLF':
+		if r and l:
+			if sensors.get_diagr_distance() > sensors.get_diagl_distance():
+				turndir = 'R'
+			else:
+				turndir = 'L'
+		elif r:
+			turndir = 'L'
+		else:
+			turndir = 'R'
+
 		halfforward(r,f,l)
-		turn('R',2)
-		straight_for_smoothturn(MOTOR_OFFSET,-1)
-		halfforward()
-		r = None
-		f = None
-		l = None
-	elif action == 'LLF':
-		halfforward(r,f,l)
-		turn('L',2)
-		straight_for_smoothturn(MOTOR_OFFSET,-1)
+		turn(turndir,2)
+		straight_for_smoothturn(1.5*MOTOR_OFFSET,-1)
 		halfforward()
 		r = None
 		f = None
@@ -1193,10 +1430,9 @@ def execute_action(action,r=None,f=None,l=None):
 		r = None
 		f = None
 		l = None
-	#stop()
 
 	maze.update_pose(action)
-	if not (r == None or f == None or l == None):
+	if not (r == None or f == None or l == None or maze.is_visited()):
 		maze.update_cell(r,f,l)
 	else:
 		# instead of reading from sensors, we will just read the actual walls
@@ -1238,7 +1474,7 @@ def wallfollow(maze):
 			action = 'RRF'
 		r,f,l = execute_action(action,r,f,l)
 		maze.update_pose(action)
-		if not (r == None or f == None or l == None):
+		if not (r == None or f == None or l == None or maze.is_visited()):
 			maze.update_cell(r,f,l)
 		maze.prettyprint_maze()
 
@@ -1268,7 +1504,26 @@ def goto(goal_rows,goal_cols,goal_dirs=None):
 
 
 def test(maze):
-	print(maze.get_path([0],[0]))
+	'''goto([15],[0],['N'])
+	goto([0],[0],['N'])'''
+
+	r,f,l = make_first_move(maze)
+	maze.prettyprint_maze()
+	print(maze.get_expected_transitions('FFFFFFF'))
+
+
+	'''n = 12
+	for i in range(12/n):
+		action = 'F'
+		for j in range(n-1):
+			action += 'F'
+		r,f,l = execute_action(action,r,f,l)
+		abserr = ((pose.position.y/LEN-1)-(i+1)*n )*LEN
+		percenterr = abserr/LEN*100
+		print "ycells: {0:.3f}\t error: {1:.3f}\t percent: {2:.3f}".format(pose.position.y/LEN-1,abserr,percenterr)
+		#print "ypos: {0:.3f}\t imudist: {1:.3f}\t error: {2:.3f}\n".format(pose.position.y,imudist+0.09,pose.position.y-imudist-0.09)'''
+
+	stop()
 
 def calibrate(maze):
 	global LINACCEL, VMIN, VMAX, RADTURN, VTURN
@@ -1302,17 +1557,31 @@ def calibrate(maze):
 
 
 def search(maze):
-	global LINACCEL, VMIN, VMAX, VTURN, MIN_DIAG_LEN
+	global LINACCEL, DIAGACCEL, VMIN, VMAX, VTURN, MIN_DIAG_LEN
+
+	maze.update_cell(True,True,True,0,0,'S')
 	for i in range(10):
+		#VMIN += 0.005
+		#VTURN += 0.005
+		#LINACCEL += 2.0
+		#DIAGACCEL += 1.00
 		goto([7,7,8,8],[7,8,7,8])
 		maze.dump('maze.mz')
 		rospy.sleep(2)
 		goto([0],[0])
+		maze.dump('maze.mz')
 		rospy.sleep(2)
+
+		if i >= 1:
+			LINACCEL += 1.0
+
+		#VMIN += 0.05
+		#VTURN += 0.05
 
 
 def init():
 	global sensors
+	sensors = Sensors()
 
     # Starts a new node
 	rospy.init_node('vayu', anonymous=False)
@@ -1320,8 +1589,8 @@ def init():
 	rospy.Subscriber('/scanlf', LaserScan, scan_callback, queue_size=1)
 	rospy.Subscriber('/scanrf', LaserScan, scan_callback, queue_size=1)
 	rospy.Subscriber('/odom', Odometry, odom_callback, queue_size=1)
+	rospy.Subscriber('/imu', Imu, imu_callback, queue_size=1)
 
-	sensors = Sensors()
 	sensors.reset(True)	# wait till subscribers are set up
 
 	maze = Maze(16,0,0)
