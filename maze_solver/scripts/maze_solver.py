@@ -26,8 +26,8 @@ WACCEL = np.pi/1
 MIN_DIAG_LEN = 0
 
 RATE = 100
-KP = -25.0
-KD = -10
+KP = -49.0
+KD = -14
 #K2 = 60
 #K1 = 2*np.sqrt(K2)
 #KP = -30.0
@@ -52,7 +52,7 @@ DIAG_SENSOR_SINANGLE = np.sin(np.pi/3)
 FRONT_SENSOR_WALL_DIST = 0.0425		#distance of front wall from laser when mouse is centered in the cell
 
 DIRS = {'N':0,'W':1,'S':2,'E':3, 0:'N', 1:'W', 2:'S', 3:'E'} # bijective mapping to keep it easier to do modular math
-COSTS = {'F': 1, 'L': 0.1, 'R': 0.1}
+COSTS = {'F': 1, 'L': 2, 'R': 2, 'LF': 0.8, 'RF': 0.8, 'LLF': 3, 'RRF': 3}
 
 # Globals
 maze = []
@@ -324,21 +324,25 @@ class GridGraph():
 
 				dir = 'N'
 				self.graph[(row,col,dir)] = {}
+				self.graph[(row,col,dir)][(row,col,'S')] = 'LLF'
 				self.graph[(row,col,dir)][(row,col,'W')] = 'L'
 				self.graph[(row,col,dir)][(row,col,'E')] = 'R'
 
 				dir = 'S'
 				self.graph[(row,col,dir)] = {}
+				self.graph[(row,col,dir)][(row,col,'N')] = 'LLF'
 				self.graph[(row,col,dir)][(row,col,'E')] = 'L'
 				self.graph[(row,col,dir)][(row,col,'W')] = 'R'
 
 				dir = 'E'
 				self.graph[(row,col,dir)] = {}
+				self.graph[(row,col,dir)][(row,col,'W')] = 'LLF'
 				self.graph[(row,col,dir)][(row,col,'N')] = 'L'
 				self.graph[(row,col,dir)][(row,col,'S')] = 'R'
 
 				dir = 'W'
 				self.graph[(row,col,dir)] = {}
+				self.graph[(row,col,dir)][(row,col,'E')] = 'LLF'
 				self.graph[(row,col,dir)][(row,col,'S')] = 'L'
 				self.graph[(row,col,dir)][(row,col,'N')] = 'R'
 
@@ -411,7 +415,7 @@ class Maze():
 
 		vertexlist = [(v[0],v[1]) for v in vertexlist]
 
-		os.system('clear')
+		#os.system('clear')
 
 		# print line by line
 		# starting with the northmost wall
@@ -512,19 +516,23 @@ class Maze():
 			else:
 				rospy.logwarn('Wrong action in update_pose')
 
-	def get_expected_pose(self,action):
-		row = self.curr_row
-		col = self.curr_col
-		dir = self.curr_dir
+	def get_expected_pose(self,action,row=None,col=None,dir=None):
+		if row == None:
+			row = self.curr_row
+		if col == None:
+			col = self.curr_col
+		if dir == None:
+			dir = self.curr_dir
 		for a in action:
+			#print a
 			if a ==  'F':
-				if self.curr_dir == 'N':
+				if dir == 'N':
 					row = row + 1
-				elif self.curr_dir == 'S':
+				elif dir == 'S':
 					row = row - 1
-				elif self.curr_dir == 'E':
+				elif dir == 'E':
 					col = col + 1
-				elif self.curr_dir == 'W':
+				elif dir == 'W':
 					col = col - 1
 			elif a == 'R':
 				dir = DIRS[np.mod(DIRS[dir]-1,4)]
@@ -598,6 +606,21 @@ class Maze():
 
 		self.cells[row][col].set_visited(visited)
 		self.gridgraph.update_forward_edges(row,col,dir,rwall,fwall,lwall)
+
+		# add smooth turn edges
+		for walldir in ['S','W','N','E']:
+			posedir = DIRS[np.mod(DIRS[walldir]+2,4)]
+			#print("\n",row,col,posedir)
+			for action in ['LF', 'RF']:
+				nextrow,nextcol,nextdir = self.get_expected_pose(action,row,col,posedir)
+				#print(nextrow,nextcol,nextdir)
+				if nextrow >= 0 and nextrow < self.dim and nextcol >= 0 and nextcol < self.dim:
+					if not self.get_wall(walldir,row,col) and not self.get_wall(nextdir,row,col):
+						self.gridgraph.add_edge( (row,col,posedir), (nextrow,nextcol,nextdir), action)
+					else:
+						self.gridgraph.remove_edge( (row,col,posedir), (nextrow,nextcol,nextdir) )
+
+
 
 	def get_cell(self,row=None,col=None,dir=None):
 		if row == None:
@@ -729,6 +752,8 @@ def get_opt_path(actionlist,vertexlist,maze):
 			else:
 				merged_actionlist2.append(curr_action)
 				merged_vertexlist2.append(curr_vertex)
+	#merged_actionlist2 = merged_actionlist
+	#merged_vertexlist2 = merged_vertexlist
 
 	# now merge all the F's together
 	# as long as they have been all visited
@@ -1048,8 +1073,8 @@ def get_steering_error(rcorr,fcorr,lcorr,sensors):
 	elif lcorr:	# if left wall exists
 		err = sensors.get_sidel_error()
 
-	#if fcorr:	# if front wall exists
-	#	err += sensors.get_front_error()/2
+	if fcorr:	# if front wall exists
+		err += sensors.get_front_error()/2
 
 	if not np.isfinite(err):
 		err = 0
@@ -1313,8 +1338,12 @@ def make_first_move(maze):
 	action += 'F'
 	r,f,l,_ = halfforward()
 	stop()
+	print(maze.curr_row,maze.curr_col,maze.curr_dir)
+	print(action)
 	maze.update_pose(action)
 	maze.update_cell(r,f,l)
+	print(maze.curr_row,maze.curr_col,maze.curr_dir)
+	rospy.sleep(5)
 	return r,f,l
 
 
@@ -1486,6 +1515,10 @@ def goto(goal_rows,goal_cols,goal_dirs=None):
 	actionlist,vertexlist = get_opt_path(actionlist,vertexlist,maze)
 
 	maze.prettyprint_maze(vertexlist)
+	print(actionlist)
+	print(vertexlist)
+	print(maze.gridgraph.graph[(maze.curr_row,maze.curr_col,maze.curr_dir)])
+	rospy.sleep(5)
 	starttime = rospy.Time.now()
 	while len(actionlist) > 0:
 		action = actionlist.pop(0)
@@ -1496,8 +1529,10 @@ def goto(goal_rows,goal_cols,goal_dirs=None):
 		maze.prettyprint_maze(vertexlist)
 		print(maze.curr_row,maze.curr_col,maze.curr_dir)
 		print(r,f,l)
+		print(actionlist)
+		print(vertexlist)
+		print(maze.gridgraph.graph[(maze.curr_row,maze.curr_col,maze.curr_dir)])
 		print (rospy.Time.now()-starttime).to_sec()
-		#stop()
 	if action[-1] == 'F':
 		halfforward(r,f,l)
 	stop()
@@ -1507,10 +1542,38 @@ def test(maze):
 	'''goto([15],[0],['N'])
 	goto([0],[0],['N'])'''
 
-	r,f,l = make_first_move(maze)
-	maze.prettyprint_maze()
-	print(maze.get_expected_transitions('FFFFFFF'))
+	goal_rows = [7, 7, 8, 8]
+	goal_cols = [7, 8, 7, 8]
+	goal_dirs = None
 
+	r,f,l = make_first_move(maze)
+	actionlist,vertexlist = maze.get_path(goal_rows,goal_cols,goal_dirs)
+	actionlist,vertexlist = get_opt_path(actionlist,vertexlist,maze)
+
+	maze.prettyprint_maze(vertexlist)
+	starttime = rospy.Time.now()
+	while len(actionlist) > 0:
+		action = actionlist.pop(0)
+		r,f,l = execute_action(action,r,f,l)
+		actionlist,vertexlist = maze.get_path(goal_rows,goal_cols,goal_dirs)
+		actionlist,vertexlist = get_opt_path(actionlist,vertexlist,maze)
+
+		maze.prettyprint_maze(vertexlist)
+		print(maze.curr_row,maze.curr_col,maze.curr_dir)
+		print(r,f,l)
+		print(actionlist)
+		print(vertexlist)
+		print(maze.gridgraph.graph[(maze.curr_row,maze.curr_col,maze.curr_dir)])
+		print (rospy.Time.now()-starttime).to_sec()
+	if action[-1] == 'F':
+		halfforward(r,f,l)
+	stop()
+	actionlist,vertexlist = maze.get_path([7, 7, 8, 8],[7, 8, 7, 8],None)
+	print(maze.curr_row,maze.curr_col,maze.curr_dir)
+	maze.prettyprint_maze(vertexlist)
+	print(actionlist)
+	print(vertexlist)
+	print(maze.gridgraph.graph[(maze.curr_row,maze.curr_col,maze.curr_dir)])
 
 	'''n = 12
 	for i in range(12/n):

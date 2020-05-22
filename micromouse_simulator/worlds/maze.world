@@ -35,7 +35,7 @@
 
     <!-- My maze -->
     <include>
-      <uri>model://my_maze</uri>
+      <uri>model://maze</uri>
 	<pose> 0 0 0 0 0 0</pose>
     </include>
 
